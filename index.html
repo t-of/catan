@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2c6e3f">
+  <meta name="description" content="六角タイルの盤で資源を集め、道・開拓地・都市を建てて競う交代プレイの試作。">
+  <title>catan — 1台で交代して遊ぶ陣取りボード</title>
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="catan">
+  <meta property="og:title" content="catan — 1台で交代して遊ぶ陣取りボード">
+  <meta property="og:description" content="六角タイルの盤で資源を集め、道・開拓地・都市を建てて競う交代プレイの試作。">
+  <meta property="og:url" content="https://t-of.github.io/catan/">
+  <meta property="og:image" content="https://t-of.github.io/catan/icons/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="ja_JP">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- apple-mobile-web-app-status-bar-style は付けない（black-translucent だと iOS 26 で上部が隠れる） -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="catan">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+
+  <link rel="stylesheet" href="./webapp-kit/webapp-kit.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="bar">
+      <h1 class="bar__title">catan</h1>
+      <div class="bar__actions">
+        <button class="pill" data-wak="install" hidden>アプリにする</button>
+        <button class="pill" data-wak="share">共有</button>
+      </div>
+    </header>
+
+    <!-- 人数選び -->
+    <section class="setup" id="setupPanel">
+      <p class="setup__lead">1台のスマホ・PCで交代して遊ぶ、カタン基本セットの試作です。</p>
+      <div class="setup__row">
+        <span>人数</span>
+        <div class="segmented" id="playerCountPicker">
+          <button class="segmented__btn is-selected" data-count="3">3人</button>
+          <button class="segmented__btn" data-count="4">4人</button>
+        </div>
+      </div>
+      <button class="primary" id="startBtn">はじめる</button>
+    </section>
+
+    <!-- ゲーム画面 -->
+    <section class="game" id="gamePanel" hidden>
+      <div class="stage" id="stage">
+        <svg id="board" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="banner" id="banner"></div>
+      </div>
+
+      <div class="players" id="playersBar"></div>
+      <div class="hand" id="handBar"></div>
+
+      <div class="sheet" id="panel" hidden></div>
+
+      <div class="actions" id="actionBar">
+        <button class="pill pill--big" id="diceBtn">サイコロ</button>
+        <button class="pill" id="buildBtn">建設</button>
+        <button class="pill" id="tradeBtn">交易</button>
+        <button class="pill" id="devBtn">発展カード</button>
+        <button class="pill" id="endTurnBtn">手番終わり</button>
+      </div>
+    </section>
+
+    <footer class="credit">
+      <a href="/">T.OF...</a> のアプリ・<a href="https://t-of.github.io/contact/">問い合わせ</a>
+    </footer>
+  </main>
+
+  <script src="./webapp-kit/webapp-kit.js"></script>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

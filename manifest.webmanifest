@@ -1,0 +1,19 @@
+{
+  "id": "./",
+  "name": "catan — 1台で交代して遊ぶ陣取りボード",
+  "short_name": "catan",
+  "description": "六角タイルの盤で資源を集め、道・開拓地・都市を建てて競う交代プレイの試作。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2c6e3f",
+  "theme_color": "#2c6e3f",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
