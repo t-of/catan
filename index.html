@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2c6e3f">
+  <meta name="theme-color" content="#0f1320">
   <meta name="description" content="六角タイルの盤で資源を集め、道・開拓地・都市を建てて競う交代プレイの試作。">
   <title>catan — 1台で交代して遊ぶ陣取りボード</title>
 
@@ -27,6 +27,10 @@
   <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Press+Start+2P&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="./webapp-kit/webapp-kit.css">
   <link rel="stylesheet" href="./style.css">
 </head>
@@ -35,42 +39,57 @@
     <header class="bar">
       <h1 class="bar__title">catan</h1>
       <div class="bar__actions">
-        <button class="pill" data-wak="install" hidden>アプリにする</button>
-        <button class="pill" data-wak="share">共有</button>
+        <button class="pixel-btn pixel-btn--small" data-wak="install" hidden>アプリにする</button>
+        <button class="pixel-btn pixel-btn--small" data-wak="share">共有</button>
       </div>
     </header>
 
     <!-- 人数選び -->
     <section class="setup" id="setupPanel">
-      <p class="setup__lead">1台のスマホ・PCで交代して遊ぶ、カタン基本セットの試作です。</p>
-      <div class="setup__row">
-        <span>人数</span>
-        <div class="segmented" id="playerCountPicker">
-          <button class="segmented__btn is-selected" data-count="3">3人</button>
-          <button class="segmented__btn" data-count="4">4人</button>
+      <div class="setup__sea"><svg class="setup__waves" id="waves" preserveAspectRatio="none"></svg></div>
+      <div class="setup__logo">catan</div>
+      <p class="setup__lead">開拓と交易のボードゲーム。1台で交代して遊ぶ試作です。</p>
+      <div class="setup__board"><svg id="titleBoard" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg></div>
+      <div class="pixel-panel setup__panel">
+        <div class="setup__row">
+          <span>人数</span>
+          <div class="segmented" id="playerCountPicker">
+            <button class="pixel-btn" data-count="3">3人</button>
+            <button class="pixel-btn" data-count="4">4人</button>
+          </div>
         </div>
+        <button class="pixel-btn pixel-btn--accent pixel-btn--big" id="startBtn">はじめる</button>
+        <button class="pixel-btn" id="continueBtn" hidden>つづきから</button>
       </div>
-      <button class="primary" id="startBtn">はじめる</button>
     </section>
 
     <!-- ゲーム画面 -->
     <section class="game" id="gamePanel" hidden>
-      <div class="stage" id="stage">
-        <svg id="board" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="banner" id="banner"></div>
+      <div class="col col--left">
+        <div class="players" id="playersBar"></div>
+        <div class="pixel-panel message" id="banner"></div>
       </div>
 
-      <div class="players" id="playersBar"></div>
-      <div class="hand" id="handBar"></div>
+      <div class="col col--center">
+        <div class="stage" id="stage">
+          <svg id="board" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="dice" id="diceBox"></div>
+        </div>
+      </div>
 
-      <div class="sheet" id="panel" hidden></div>
+      <div class="col col--right">
+        <div class="hand" id="handBar"></div>
+        <div class="builds" id="buildGrid"></div>
+        <div class="actions" id="actionBar">
+          <button class="pixel-btn pixel-btn--accent" id="diceBtn">サイコロ</button>
+          <button class="pixel-btn" id="tradeBtn">交易</button>
+          <button class="pixel-btn" id="devBtn">発展カード</button>
+          <button class="pixel-btn pixel-btn--accent pixel-btn--wide" id="endTurnBtn">手番終わり ▶</button>
+        </div>
+      </div>
 
-      <div class="actions" id="actionBar">
-        <button class="pill pill--big" id="diceBtn">サイコロ</button>
-        <button class="pill" id="buildBtn">建設</button>
-        <button class="pill" id="tradeBtn">交易</button>
-        <button class="pill" id="devBtn">発展カード</button>
-        <button class="pill" id="endTurnBtn">手番終わり</button>
+      <div class="overlay" id="panelOverlay" hidden>
+        <div class="pixel-panel sheet" id="panel"></div>
       </div>
     </section>
 
