@@ -1,8 +1,8 @@
 'use strict';
-// ルール・盤面・得点計算は engine.js（画面・音を持たない）。見た目のドット素材は sprites.js。
+// ルール・盤面・得点計算は engine.js（画面・音を持たない）。イラストの絵の部品は illust.js。
 // ここは見た目の組み立てと入力だけ。
 import * as E from './engine.js';
-import * as S from './sprites.js';
+import * as I from './illust.js';
 
 // localStorage はほかのアプリと共有される（同じ t-of.github.io のため）。キーは必ず 'catan.' で始める。
 const STORE = 'catan.';
@@ -56,16 +56,19 @@ const SOUND = {
 const els = {
   setupPanel: document.getElementById('setupPanel'),
   gamePanel: document.getElementById('gamePanel'),
-  waves: document.getElementById('waves'),
   titleBoard: document.getElementById('titleBoard'),
   playerCountPicker: document.getElementById('playerCountPicker'),
   startBtn: document.getElementById('startBtn'),
   continueBtn: document.getElementById('continueBtn'),
+  turnNum: document.getElementById('turnNum'),
   board: document.getElementById('board'),
   diceBox: document.getElementById('diceBox'),
+  hint: document.getElementById('hint'),
   banner: document.getElementById('banner'),
   playersBar: document.getElementById('playersBar'),
+  bankPanel: document.getElementById('bankPanel'),
   handBar: document.getElementById('handBar'),
+  handCount: document.getElementById('handCount'),
   buildGrid: document.getElementById('buildGrid'),
   panelOverlay: document.getElementById('panelOverlay'),
   panel: document.getElementById('panel'),
@@ -76,34 +79,64 @@ const els = {
   endTurnBtn: document.getElementById('endTurnBtn'),
 };
 
-const SCALE = 44; // 1マス単位 → SVG座標のピクセル
+const SCALE = 66; // 1マス単位(外接円半径1) → SVG座標のピクセル。illust.js の地形の絵は R=66 に合わせて置いてある。
 const RES_LABEL = { wood: '木', brick: '土', sheep: '羊', wheat: '麦', ore: '鉄' };
-const RES_BG = { wood: 'var(--wood)', brick: 'var(--brick)', sheep: 'var(--sheep)', wheat: 'var(--wheat)', ore: 'var(--ore)' };
+const RES_COLOR = { wood: '#3f8a4a', brick: '#c0643a', sheep: '#8cc063', wheat: '#e0b440', ore: '#8a92a3' };
+const PORT_TERRAIN = { wood: 'forest', brick: 'hills', sheep: 'pasture', wheat: 'field', ore: 'mountains' };
 
-function icon(kind, cell, color) {
-  const svg = S.iconSvg(kind, cell, color);
+// 資源・建物などの小さなアイコン（40x40 の viewBox。svg は CSS の幅・高さで好きな大きさに拡大できる）
+function resIcon(kind) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 40 40');
+  svg.setAttribute('class', 'res-icon');
+  const shapes = [];
+  I.resourceIcon(shapes, kind);
+  shapes.forEach((s) => svg.appendChild(pathEl(s)));
   return svg;
+}
+function pathEl(s) {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  n.setAttribute('d', s.d);
+  n.setAttribute('fill', s.f);
+  n.setAttribute('style', `opacity:${s.o};stroke:${s.sk};stroke-width:${s.sw}px;stroke-linejoin:round;stroke-linecap:round`);
+  return n;
+}
+function buildIcon(key, color) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 28 28');
+  svg.setAttribute('class', 'build-btn__icon');
+  const shapes = [];
+  const dark = I.tint(color, -0.4), light = I.tint(color, 0.35);
+  if (key === 'road') { I.add(shapes, I.line(5, 21, 23, 7), 'none', 1, '#1b1612', 8); I.add(shapes, I.line(5, 21, 23, 7), 'none', 1, color, 4.5); }
+  else if (key === 'settlement') I.house(shapes, 14, 17, color, dark, light);
+  else if (key === 'city') I.city(shapes, 14, 17, color, dark, light);
+  else if (key === 'dev') { I.add(shapes, I.rect(6, 3, 16, 22), '#f6eedb', 1, '#1b1612', 1.5); I.add(shapes, I.rect(9, 6, 10, 10), '#7a5bb8', 0.85); }
+  shapes.forEach((s) => svg.appendChild(pathEl(s)));
+  return svg;
+}
+function dieEl(value, rotateDeg) {
+  const wrap = document.createElement('div');
+  wrap.className = 'die';
+  wrap.style.transform = `rotate(${rotateDeg}deg)`;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', 46); svg.setAttribute('height', 46);
+  const PIPS = {
+    1: [[23, 23]], 2: [[14, 14], [32, 32]], 3: [[13, 13], [23, 23], [33, 33]],
+    4: [[14, 14], [32, 14], [14, 32], [32, 32]], 5: [[13, 13], [33, 13], [23, 23], [13, 33], [33, 33]],
+    6: [[14, 12], [32, 12], [14, 23], [32, 23], [14, 34], [32, 34]],
+  }[value] || [];
+  PIPS.forEach(([x, y]) => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 4.2); c.setAttribute('fill', '#2a211b');
+    svg.appendChild(c);
+  });
+  wrap.appendChild(svg);
+  return wrap;
 }
 
 let game = null;
 let playerCount = load('playerCount', 3) === 4 ? 4 : 3;
 let ui = { mode: 'idle', data: {} };
-
-// ---- 波（タイトル画面の飾り。毎回ランダムでよい） ----
-(function renderWaves() {
-  const svg = els.waves;
-  svg.setAttribute('viewBox', '0 0 390 220');
-  for (let k = 0; k < 40; k++) {
-    const x = (k * 89 + 13) % 382;
-    const y = (k * 47 + 7) % 214;
-    const r1 = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    r1.setAttribute('x', x); r1.setAttribute('y', y); r1.setAttribute('width', 8); r1.setAttribute('height', 2); r1.setAttribute('fill', '#3b62a6');
-    svg.appendChild(r1);
-    const r2 = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    r2.setAttribute('x', x + 8); r2.setAttribute('y', y - 2); r2.setAttribute('width', 4); r2.setAttribute('height', 2); r2.setAttribute('fill', '#3b62a6');
-    svg.appendChild(r2);
-  }
-})();
 
 // ---- 人数選び ----
 els.playerCountPicker.addEventListener('click', (e) => {
@@ -162,8 +195,9 @@ function playEvents() {
 
 // ================================================================
 // 盤面の描画（タイトルの飾りと、ゲーム中の盤の両方をこの関数で描く）
-// ドットは画面の大きさの色の表（Int16Array）にまず塗り、行ごとに同じ色の続きを1本の path
-// にまとめてから <path> を色の数だけ置く（2倍細かくすると矩形の数が増えるので、SVG の要素数を減らす）。
+// illust.js の図形（パス文字列と塗り色）をゲームの状態（タイル・道・建物・盗賊・置ける場所）に
+// 合わせて並べ、<path>・<text> として SVG に足す。<defs>（タイルのグラデーション）だけは
+// 毎回の再描画で消さずに使い回す。
 // ================================================================
 const svgNS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs, parent) {
@@ -172,91 +206,91 @@ function el(tag, attrs, parent) {
   if (parent) parent.appendChild(n);
   return n;
 }
-
-function hexBBox(g, hex) {
-  const vs = hex.vertexIds.map((id) => g.board.vertices[id]);
-  const xs = vs.map((v) => v.x * SCALE), ys = vs.map((v) => v.y * SCALE);
-  return {
-    cx: (Math.min(...xs) + Math.max(...xs)) / 2,
-    cy: (Math.min(...ys) + Math.max(...ys)) / 2,
-    w: Math.max(...xs) - Math.min(...xs),
-    h: Math.max(...ys) - Math.min(...ys),
-  };
+function ensureDefs(svg) {
+  let defs = svg.querySelector('defs');
+  if (!defs) { defs = el('defs', {}); defs.innerHTML = I.defsMarkup(svg.id); svg.appendChild(defs); }
+  return defs;
 }
 
+function hexCenterPx(g, hex) {
+  const vs = hex.vertexIds.map((id) => g.board.vertices[id]);
+  const cx = vs.reduce((a, v) => a + v.x, 0) / vs.length;
+  const cy = vs.reduce((a, v) => a + v.y, 0) / vs.length;
+  return [cx * SCALE, cy * SCALE];
+}
+function hexPointsPx(g, hex) {
+  return hex.vertexIds.map((id) => { const v = g.board.vertices[id]; return [v.x * SCALE, v.y * SCALE]; });
+}
 function viewBoxOf(g) {
   const xs = g.board.vertices.map((v) => v.x * SCALE);
   const ys = g.board.vertices.map((v) => v.y * SCALE);
-  const margin = SCALE * 0.9;
+  const margin = SCALE * 1.15;
   const minX = Math.min(...xs) - margin, maxX = Math.max(...xs) + margin;
   const minY = Math.min(...ys) - margin, maxY = Math.max(...ys) + margin;
   return { minX, minY, w: maxX - minX, h: maxY - minY };
 }
 
 function renderBoardInto(svg, g, uiState) {
-  svg.innerHTML = '';
+  const defs = ensureDefs(svg);
+  [...svg.children].forEach((c) => { if (c !== defs) c.remove(); });
   const idx = E.currentPlayer(g);
-  const hexBoxes = g.board.hexes.map((h) => hexBBox(g, h));
-  const k = (hexBoxes[0].w || 76) / 64; // Board.dc.html の W=64 を基準にした縮尺
-  const CELL = 4 * k;       // アイコン全体の大きさの基準（今まで通り）
-  const DOT = CELL / S.RES; // 1ドットの大きさ（今までの半分＝2倍細かい）
-
   const vb = viewBoxOf(g);
   svg.setAttribute('viewBox', `${vb.minX} ${vb.minY} ${vb.w} ${vb.h}`);
 
-  // 色の表。ox,oy はグリッドの原点（viewBox の左上）。1 グリッド = 画面の 1 ドット。
-  const ox = Math.floor(vb.minX), oy = Math.floor(vb.minY);
-  const BW = Math.ceil(vb.w) + 2, BH = Math.ceil(vb.h) + 2;
-  const grid = new Int16Array(BW * BH);
-  const cols = [null]; // index 0 = 透明
-  const cmap = new Map();
-  function colorIndex(fill, opacity) {
-    const key = fill + '|' + (opacity == null ? 1 : opacity);
-    let i = cmap.get(key);
-    if (i == null) { i = cols.push({ fill, opacity: opacity == null ? 1 : opacity }) - 1; cmap.set(key, i); }
-    return i;
-  }
-  function fillPx(x, y, w, h, fill, opacity) {
-    const ci = colorIndex(fill, opacity);
-    const x0 = Math.max(0, Math.round(x) - ox), x1 = Math.min(BW, Math.round(x + w) - ox);
-    const y0 = Math.max(0, Math.round(y) - oy), y1 = Math.min(BH, Math.round(y + h) - oy);
-    if (x1 <= x0 || y1 <= y0) return;
-    for (let yy = y0; yy < y1; yy++) grid.fill(ci, yy * BW + x0, yy * BW + x1);
-  }
-  const paint = (rects) => rects.forEach((r) => fillPx(r.x, r.y, r.w, r.h, r.f));
-  // 数字・港の文字・タップ判定などの実要素は、色の表を塗り終えてから最後にまとめて足す（path の上に乗せるため）
-  const overlay = [];
-  const queue = (tag, attrs, text) => overlay.push({ tag, attrs, text });
+  const S = []; // 塗りの図形（順に描く）
+  const labels = []; // 文字
+  const overlay = []; // タップ判定・盤ハイライトの実要素（色の図形より後に乗せる）
+  const queue = (tag, attrs) => overlay.push({ tag, attrs });
 
-  // 砂浜のふち（先に全タイル分を敷き、ふちを作る）
-  const beach = [];
-  hexBoxes.forEach(({ cx, cy, w, h }) => { S.hexBandRects(cx, cy, w + 20 * k, h + 20 * k, '#e9d9a6', DOT, beach); });
-  hexBoxes.forEach(({ cx, cy, w, h }) => { S.hexBandRects(cx, cy + 4 * k, w + 12 * k, h + 8 * k, '#c9b37a', DOT, beach); });
-  hexBoxes.forEach(({ cx, cy, w, h }) => { S.hexBandRects(cx, cy, w + 8 * k, h + 8 * k, S.INK, DOT, beach); });
-  paint(beach);
+  // 波（飾り。毎回同じ並びでよい）
+  for (let k = 0; k < 26; k++) {
+    const x = vb.minX + ((k * 137 + 40) % Math.max(1, vb.w));
+    const y = vb.minY + ((k * 71 + 20) % Math.max(1, vb.h));
+    I.add(S, `M${x},${y} q7,-5 14,0 t14,0`, 'none', 0.18, '#bfe6ee', 1.5);
+  }
 
-  // タイル本体（地形の下地・スプライト・数字チップ）
-  g.board.hexes.forEach((hex, i) => {
-    const { cx, cy, w, h } = hexBoxes[i];
-    const T = S.TER[hex.terrain];
-    const rects = [];
-    S.hexBandRects(cx, cy, w - 4 * k, h - 4 * k, T.shade, DOT, rects);
-    S.hexBandRects(cx, cy - 4 * k, w - 12 * k, h - 12 * k, T.base, DOT, rects);
-    S.blitRects(S.spr(T.spr, 8, 8, null), cx - 4 * CELL, cy - (hex.number != null ? 8 : 4) * CELL, DOT, S.PAL, rects);
-    paint(rects);
+  // 浅瀬と砂浜のふち
+  const allHexPath = g.board.hexes.map((h) => I.poly(hexPointsPx(g, h))).join(' ');
+  I.add(S, allHexPath, '#5fb7b5', 0.25, '#5fb7b5', 66);
+  I.add(S, allHexPath, '#e7d3a1', 1, '#e7d3a1', 30);
+  I.add(S, allHexPath, '#cdb683', 1, '#cdb683', 12);
+
+  // タイル本体
+  g.board.hexes.forEach((hex) => {
+    const [cx, cy] = hexCenterPx(g, hex);
+    const pts = hexPointsPx(g, hex);
+    const style = I.TERRAIN_STYLE[hex.terrain];
+    const shrink = (p, k) => p.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k]);
+    I.add(S, I.poly(shrink(pts, 0.98)), style.edge);
+    I.add(S, I.poly(shrink(pts, 0.94)), `url(#${svg.id}-g-${style.grad})`);
+    I.add(S, I.poly(shrink(pts, 0.88)), 'none', 0.22, '#ffffff', 1.5);
+    I.terrainDecor(S, hex.terrain, cx, cy);
     if (hex.number != null) {
       const hot = hex.number === 6 || hex.number === 8;
-      const chip = [];
-      S.discRects(cx, cy + 8 * k, 15 * k, S.INK, DOT, chip);
-      S.discRects(cx, cy + 8 * k, 13 * k, S.CREAM, DOT, chip);
-      paint(chip);
-      queue('text', { x: cx, y: cy + 8 * k + 5 * k, class: 'hex-number', style: `font-family:'Press Start 2P',monospace;font-size:${14 * k}px;fill:${hot ? '#c8321e' : S.INK};text-anchor:middle;dominant-baseline:central` }, String(hex.number));
+      I.add(S, I.ell(cx + 1, cy + 8, 19, 19), '#000', 0.28);
+      I.add(S, I.ell(cx, cy + 5, 18, 18), `url(#${svg.id}-g-token)`, 1, '#c7b58b', 1.2);
+      labels.push({ x: cx, y: cy + 11, t: String(hex.number), f: hot ? '#b8321f' : '#2a211b', s: hot ? 21 : 19, w: 700 });
       const dots = 6 - Math.abs(7 - hex.number);
-      const pip = [];
-      const x0 = cx - Math.round(((dots * 3 - 1) / 2)) * k;
-      for (let d = 0; d < dots; d++) pip.push({ x: x0 + d * 3 * k, y: cy + 16 * k, w: 2 * k, h: 2 * k, f: hot ? '#c8321e' : S.INK });
-      paint(pip);
+      for (let d = 0; d < dots; d++) I.add(S, I.ell(cx - (dots - 1) * 2.4 + d * 4.8, cy + 17, 1.3, 1.3), hot ? '#b8321f' : '#2a211b');
     }
+  });
+
+  // 港（銀行との交換レートの札）
+  g.board.portEdgeIds.forEach((eId) => {
+    const e = g.board.edges[eId];
+    const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+    const mx = (v1.x + v2.x) / 2 * SCALE, my = (v1.y + v2.y) / 2 * SCALE;
+    const len = Math.hypot(mx, my) || 1;
+    const px = mx + (mx / len) * (SCALE * 0.55), py = my + (my / len) * (SCALE * 0.55);
+    const type = v1.port;
+    const isAny = type === '3:1';
+    const bg = isAny ? '#f6eedb' : RES_COLOR[type];
+    I.add(S, I.line(mx, my, px, py), 'none', 1, '#6e5436', 7);
+    I.add(S, I.line(mx, my, px, py), 'none', 1, '#9a7a52', 3);
+    I.add(S, I.ell(px, py + 2, 18, 18), '#000', 0.25);
+    I.add(S, I.ell(px, py, 18, 18), '#f6eedb', 1, isAny ? '#b9a980' : bg, 3);
+    labels.push({ x: px, y: isAny ? py + 5 : py + 1, t: isAny ? '3:1' : '2:1', f: '#2a211b', s: 13, w: 700 });
+    if (!isAny) labels.push({ x: px, y: py + 13, t: RES_LABEL[type], f: bg, s: 10, w: 700 });
   });
 
   // 道（既存＋置ける場所）
@@ -265,13 +299,20 @@ function renderBoardInto(svg, g, uiState) {
   g.board.edges.forEach((edge) => {
     const v1 = g.board.vertices[edge.v1], v2 = g.board.vertices[edge.v2];
     const x1 = v1.x * SCALE, y1 = v1.y * SCALE, x2 = v2.x * SCALE, y2 = v2.y * SCALE;
+    const tx1 = x1 + (x2 - x1) * 0.1, ty1 = y1 + (y2 - y1) * 0.1;
+    const tx2 = x1 + (x2 - x1) * 0.9, ty2 = y1 + (y2 - y1) * 0.9;
     if (edge.road != null) {
-      drawDottedLine(fillPx, x1, y1, x2, y2, g.players[edge.road].color, DOT);
+      const color = g.players[edge.road].color;
+      I.add(S, I.line(tx1 + 1, ty1 + 3, tx2 + 1, ty2 + 3), 'none', 0.3, '#000', 10);
+      I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, '#1b1612', 10);
+      I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, color, 6);
+      I.add(S, I.line(tx1, ty1 - 1, tx2, ty2 - 1), 'none', 0.35, '#ffffff', 1.5);
     } else if (buildableEdges.has(edge.id)) {
-      drawDottedLine(fillPx, x1, y1, x2, y2, 'var(--accent)', DOT, true);
+      I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, '#1b1612', 9);
+      I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 0.85, 'var(--accent)', 5);
       queue('line', { x1, y1, x2, y2, class: 'road-hit', 'data-edge': edge.id });
     } else {
-      queue('line', { x1, y1, x2, y2, stroke: 'rgba(255,255,255,0.12)', 'stroke-width': 3 });
+      queue('line', { x1, y1, x2, y2, stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 2.5 });
     }
   });
 
@@ -283,91 +324,43 @@ function renderBoardInto(svg, g, uiState) {
     const x = v.x * SCALE, y = v.y * SCALE;
     if (v.building) {
       const color = g.players[v.building.owner].color;
-      const pal = S.paletteFor(color);
-      const isCity = v.building.type === 'city';
-      const nx = isCity ? 12 : 10, ny = isCity ? 10 : 9;
-      const bc = CELL * 0.55;
-      const rects = [];
-      S.blitRects(S.spr(isCity ? 'city' : 'settle', nx, ny, S.INK), x - (nx * bc) / 2, y - (ny * bc) / 2, bc / S.RES, pal, rects);
-      paint(rects);
+      const dark = I.tint(color, -0.4), light = I.tint(color, 0.35);
+      if (v.building.type === 'city') I.city(S, x, y, color, dark, light);
+      else I.house(S, x, y, color, dark, light);
     } else if (buildableVerts.has(v.id)) {
-      const hi = [];
-      hi.push({ x: x - 8 * k, y: y - 8 * k, w: 16 * k, h: 16 * k, f: S.INK });
-      hi.push({ x: x - 6 * k, y: y - 6 * k, w: 12 * k, h: 12 * k, f: '#ffd35c' });
-      hi.push({ x: x - 3 * k, y: y - 3 * k, w: 6 * k, h: 6 * k, f: '#fff6c8' });
-      paint(hi);
-      queue('circle', { cx: x, cy: y, r: 11, class: 'vertex-hit', 'data-vertex': v.id });
+      I.add(S, I.ell(x, y, 15, 15), '#f0cf85', 0.3);
+      I.add(S, I.ell(x, y, 9, 9), '#f0cf85', 0.6, '#fff3cf', 2.5);
+      queue('circle', { cx: x, cy: y, r: 12, class: 'vertex-hit', 'data-vertex': v.id });
     }
-  });
-
-  // 港（銀行との交換レートの札。頂点の上に乗ることがあるので、頂点より後に描く）
-  g.board.portEdgeIds.forEach((eId) => {
-    const e = g.board.edges[eId];
-    const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
-    const mx = (v1.x + v2.x) / 2, my = (v1.y + v2.y) / 2;
-    const len = Math.hypot(mx, my) || 1;
-    const x = (mx + (mx / len) * 0.45) * SCALE, y = (my + (my / len) * 0.45) * SCALE;
-    const type = v1.port;
-    const isAny = type === '3:1';
-    const bg = isAny ? S.CREAM : (PORT_TERRAIN[type] ? S.TER[PORT_TERRAIN[type]].base : S.CREAM);
-    const plaque = [];
-    plaque.push({ x: x - 17 * k, y: y - 9 * k, w: 34 * k, h: 18 * k, f: S.INK });
-    plaque.push({ x: x - 15 * k, y: y - 7 * k, w: 30 * k, h: 14 * k, f: bg });
-    plaque.push({ x: x - 15 * k, y: y + 5 * k, w: 30 * k, h: 2 * k, f: S.shade(bg) });
-    paint(plaque);
-    queue('text', { x, y: y + 4 * k, class: 'port-label', fill: isAny ? S.INK : '#fbf5e4' }, isAny ? '3:1' : '2:1');
   });
 
   // 盗賊
   {
-    const { cx, cy } = hexBoxes[g.board.robberHex];
-    paint(S.blitRects(S.spr('robber', 8, 8, null), cx - 4 * CELL, cy - 4 * CELL, DOT, S.PAL, []));
+    const [cx, cy] = hexCenterPx(g, g.board.hexes[g.board.robberHex]);
+    I.robber(S, cx + 2, cy + 14, 1.15);
   }
 
   // 盗賊を置ける場所（タイル自体をタップできるようにする）
   if (uiState && (uiState.mode === 'moveRobber' || uiState.mode === 'devKnightHex')) {
     g.board.hexes.forEach((hex) => {
       if (hex.id === g.board.robberHex) return;
-      const pts = hex.vertexIds.map((id) => { const v = g.board.vertices[id]; return `${v.x * SCALE},${v.y * SCALE}`; }).join(' ');
+      const pts = hexPointsPx(g, hex).map(([x, y]) => `${x},${y}`).join(' ');
       queue('polygon', { points: pts, class: 'hex-target', 'data-hex': hex.id });
     });
   }
 
-  // 色の表 → 行ごとに同じ色の続きを1本のpathにまとめ、色ごとに1つの<path>にする
-  const runs = cols.map(() => []);
-  for (let y = 0; y < BH; y++) {
-    const row = y * BW;
-    let x = 0;
-    while (x < BW) {
-      const ci = grid[row + x];
-      let n = 1;
-      while (x + n < BW && grid[row + x + n] === ci) n++;
-      if (ci) runs[ci].push(`M${x + ox} ${y + oy}h${n}v1h-${n}z`);
-      x += n;
-    }
-  }
-  cols.forEach((c, i) => {
-    if (!c || !runs[i].length) return;
-    const attrs = { d: runs[i].join(''), fill: c.fill };
-    if (c.opacity !== 1) attrs['fill-opacity'] = c.opacity;
-    el('path', attrs, svg);
+  S.forEach((s) => svg.appendChild(pathEl(s)));
+  labels.forEach((l) => {
+    const n = el('text', {
+      x: l.x, y: l.y, fill: l.f, class: 'hex-number',
+      style: `font-family:'Fraunces',serif;font-size:${l.s}px;font-weight:${l.w};text-anchor:middle;dominant-baseline:central`,
+    }, svg);
+    n.textContent = l.t;
   });
-
-  // 実要素（数字・港の文字・タップ判定）は path の上に
-  overlay.forEach((o) => { const n = el(o.tag, o.attrs, svg); if (o.text != null) n.textContent = o.text; });
+  overlay.forEach((o) => el(o.tag, o.attrs, svg));
 }
-const PORT_TERRAIN = { wood: 'forest', brick: 'hills', sheep: 'pasture', wheat: 'field', ore: 'mountains' };
 
-// 道のドット（12個。前より数を倍にして細かくつなぐ）
-function drawDottedLine(fillPx, x1, y1, x2, y2, color, cell, light) {
-  const n = 12;
-  for (let i = 0; i < n; i++) {
-    const t = 0.15 + i * (0.7 / (n - 1));
-    const x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t;
-    if (!light) fillPx(x - cell, y - cell, cell * 2, cell * 2, S.INK);
-    fillPx(x - cell / 2, y - cell / 2, cell, cell, color, light ? 0.7 : 1);
-  }
-}
+// 数字チップ・港の文字の位置は port-label と同じ Fraunces を使う
 
 function vertexChoices() {
   const idx = E.currentPlayer(game);
@@ -384,23 +377,49 @@ function edgeChoices() {
 }
 
 // ================================================================
-// プレイヤー一覧
+// プレイヤー一覧・銀行
 // ================================================================
 function renderPlayers() {
   const idx = E.currentPlayer(game);
   els.playersBar.innerHTML = '';
   game.players.forEach((p, i) => {
-    const chip = document.createElement('div');
-    chip.className = `player-chip${i === idx ? ' is-turn' : ''}`;
+    const card = document.createElement('div');
+    card.className = `player-card${i === idx ? ' is-turn' : ''}`;
+    const light = I.tint(p.color, 0.45), dark = I.tint(p.color, -0.35);
+    const dot = document.createElement('div');
+    dot.className = 'player-card__dot';
+    dot.style.background = `radial-gradient(circle at 35% 30%, ${light}, ${p.color} 60%, ${dark})`;
+    dot.textContent = String(i + 1);
+    const body = document.createElement('div');
+    body.className = 'player-card__body';
     const bonus = [];
     if (game.longestRoadPlayer === i) bonus.push('最長路');
     if (game.largestArmyPlayer === i) bonus.push('騎士団');
-    chip.innerHTML = `<div class="player-chip__head"><span class="player-chip__dot" style="background:${p.color}"></span>P${i + 1}${i === idx ? '<span class="player-chip__cur">▶</span>' : ''}</div>`
-      + `<div class="player-chip__vp">${E.playerScore(game, i)}<span style="font-size:11px;color:var(--muted)"> 点</span></div>`
-      + `<div class="player-chip__sub">手札 ${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)}</div>`
-      + `<div class="player-chip__extra">${bonus.join(' ')}</div>`;
-    els.playersBar.appendChild(chip);
+    body.innerHTML = `<div class="player-card__name">P${i + 1}${i === idx ? '<span class="player-card__cur">手番</span>' : ''}</div>`
+      + `<div class="player-card__sub">手札 ${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)}・騎士 ${p.knightsPlayed}</div>`
+      + `<div class="player-card__extra">${bonus.join(' ')}</div>`;
+    const vp = document.createElement('div');
+    vp.className = 'player-card__vp';
+    vp.innerHTML = `<b>${E.playerScore(game, i)}</b><span>点</span>`;
+    card.append(dot, body, vp);
+    els.playersBar.appendChild(card);
   });
+}
+
+function renderBank() {
+  els.bankPanel.innerHTML = `<div class="bank__head"><span>銀行</span><span>発展カード 残り ${game.bank.devDeck.length}</span></div>`;
+  const grid = document.createElement('div');
+  grid.className = 'bank__grid';
+  E.RESOURCES.forEach((r) => {
+    const cell = document.createElement('div');
+    cell.className = 'bank__res';
+    cell.appendChild(resIcon(r));
+    const b = document.createElement('b');
+    b.textContent = game.bank.resources[r];
+    cell.appendChild(b);
+    grid.appendChild(cell);
+  });
+  els.bankPanel.appendChild(grid);
 }
 
 function renderHand() {
@@ -410,8 +429,7 @@ function renderHand() {
   E.RESOURCES.forEach((r) => {
     const cell = document.createElement('div');
     cell.className = 'hand__res';
-    cell.style.background = RES_BG[r];
-    cell.appendChild(icon(r, 4));
+    cell.appendChild(resIcon(r));
     const b = document.createElement('b');
     b.textContent = `×${p.resources[r]}`;
     cell.appendChild(b);
@@ -419,15 +437,16 @@ function renderHand() {
   });
   const extra = document.createElement('div');
   extra.className = 'hand__extra';
-  extra.innerHTML = `<span>🃏 発展カード ${p.devCards.filter((c) => !c.played).length}枚</span>`;
+  extra.textContent = `発展カード ${p.devCards.filter((c) => !c.played).length}枚`;
   els.handBar.appendChild(extra);
+  els.handCount.textContent = `${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)} 枚`;
 }
 
 function renderDice() {
   els.diceBox.innerHTML = '';
   if (!game.diceLast) return;
-  els.diceBox.appendChild(icon(`die${game.diceLast[0]}`, 3));
-  els.diceBox.appendChild(icon(`die${game.diceLast[1]}`, 3));
+  els.diceBox.appendChild(dieEl(game.diceLast[0], -8));
+  els.diceBox.appendChild(dieEl(game.diceLast[1], 7));
 }
 
 function renderBanner() {
@@ -447,7 +466,10 @@ function renderBanner() {
   else if (ui.mode === 'devKnightHex' || ui.mode === 'robberTargetForDev') hint = '盗賊を動かすタイルをタップ。';
   else if (ui.mode === 'devRoad1') hint = '街道建設: 1本目の道を置く場所をタップ。';
   else if (ui.mode === 'devRoad2') hint = '街道建設: 2本目の道を置く場所をタップ（終わってもよい）。';
-  els.banner.innerHTML = `<div>${main}</div>` + (hint ? `<div class="message__hint">${hint}</div>` : '');
+  els.hint.textContent = hint;
+  const lastLog = game.log[game.log.length - 1];
+  els.banner.innerHTML = `<div>${main}</div>` + (lastLog ? `<div class="message__log">ひとつ前: ${lastLog}</div>` : '');
+  els.turnNum.textContent = String(game.turnNumber);
 }
 
 // ================================================================
@@ -457,7 +479,7 @@ function costRow(cost) {
   const wrap = document.createElement('span');
   wrap.className = 'build-btn__cost';
   Object.entries(cost).forEach(([r, n]) => {
-    wrap.appendChild(icon(r, 2));
+    wrap.appendChild(resIcon(r));
     const s = document.createElement('span');
     s.textContent = `×${n}`;
     wrap.appendChild(s);
@@ -480,9 +502,11 @@ function renderBuildGrid() {
   defs.forEach((d) => {
     const btn = document.createElement('button');
     const active = (d.key === 'road' && ui.mode === 'buildRoad') || (d.key === 'settlement' && ui.mode === 'buildSettlement') || (d.key === 'city' && ui.mode === 'buildCity');
-    btn.className = `pixel-btn build-btn${active ? ' is-selected' : ''}`;
+    btn.className = `build-btn${active ? ' is-selected' : ''}`;
     btn.disabled = !d.ok;
+    btn.appendChild(buildIcon(d.key, p.color));
     const label = document.createElement('span');
+    label.className = 'build-btn__label';
     label.textContent = d.label;
     btn.appendChild(label);
     btn.appendChild(costRow(d.cost));
@@ -503,9 +527,6 @@ function openPanel() { els.panelOverlay.hidden = false; }
 function closePanel() { els.panelOverlay.hidden = true; els.panel.innerHTML = ''; }
 
 function renderPanel() {
-  const idx = E.currentPlayer(game);
-  const p = game.players[idx];
-
   if (ui.mode === 'discard' && game.phase === 'discard') { openPanel(); renderDiscardPanel(); return; }
   if (ui.data.pendingHex != null) { openPanel(); renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev); return; }
   if (ui.mode === 'tradeMenu') { openPanel(); renderTradeMenu(); return; }
@@ -513,7 +534,14 @@ function renderPanel() {
   if (ui.mode === 'devYearOfPlenty') { openPanel(); renderYearOfPlentyPanel(); return; }
   if (ui.mode === 'devMonopoly') { openPanel(); renderMonopolyPanel(); return; }
   if (ui.mode === 'devRoad2') { openPanel(); renderDevRoadFinish(); return; }
+  if (game.winner != null) { openPanel(); renderWinPanel(); return; }
   closePanel();
+}
+
+function renderWinPanel() {
+  els.panel.innerHTML = `<h2>プレイヤー${game.winner + 1}の勝ち！</h2><p>10点に到達しました。</p>
+    <button class="btn btn--accent" data-act="close">とじる</button>`;
+  bindPanel({ close: () => { closePanel(); } });
 }
 
 function bindPanel(actions) {
@@ -536,11 +564,11 @@ function renderDiscardPanel() {
           <button data-act="dec" data-res="${r}">−</button><b>${picked[r]}</b>
           <button data-act="inc" data-res="${r}">＋</button>
         </span></div>`).join('')
-    + `<button class="pixel-btn pixel-btn--accent" data-act="confirm" ${total === d.count ? '' : 'disabled'}>捨てる</button>`;
+    + `<button class="btn btn--accent" data-act="confirm" ${total === d.count ? '' : 'disabled'}>捨てる</button>`;
   // 資源のアイコンを差し込む
   E.RESOURCES.forEach((r) => {
     const span = els.panel.querySelector(`[data-row="${r}"]`);
-    span.prepend(icon(r, 2));
+    span.prepend(resIcon(r));
   });
   bindPanel({
     inc: (b) => { const r = b.dataset.res; if (picked[r] < p.resources[r] && total < d.count) { picked[r]++; renderPanel(); } },
@@ -584,19 +612,19 @@ function renderTradeMenu() {
   els.panel.innerHTML = `<h2>銀行・港と交易</h2>
     <div class="sheet__row"><span>出す（${rate}枚で1枚）</span><div class="res-pick" data-row="give"></div></div>
     <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="want"></div></div>
-    <button class="pixel-btn pixel-btn--accent" data-act="bank" ${p.resources[give] >= rate && give !== want ? '' : 'disabled'}>${rate}:1で交易する</button>
+    <button class="btn btn--accent" data-act="bank" ${p.resources[give] >= rate && give !== want ? '' : 'disabled'}>${rate}:1で交易する</button>
     <hr style="border-color:rgba(255,255,255,0.15)">
     <h2>相手と交易</h2>
     <div class="sheet__row"><span>相手</span><div class="res-pick" data-row="other"></div></div>
     <div class="sheet__row"><span>渡す</span><div class="res-pick" data-row="pgive"></div></div>
     <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="pget"></div></div>
-    <button class="pixel-btn pixel-btn--accent" data-act="playerTrade">この内容で成立させる</button>
+    <button class="btn btn--accent" data-act="playerTrade">この内容で成立させる</button>
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
 
   fillResPick(els.panel.querySelector('[data-row="give"]'), E.RESOURCES, (r) => r === give, (r, b) => {
-    b.appendChild(icon(r, 2)); const s = document.createElement('span'); s.textContent = `×${p.resources[r]}`; b.appendChild(s);
+    b.appendChild(resIcon(r)); const s = document.createElement('span'); s.textContent = `×${p.resources[r]}`; b.appendChild(s);
   }, 'give');
-  fillResPick(els.panel.querySelector('[data-row="want"]'), E.RESOURCES, (r) => r === want, (r, b) => b.appendChild(icon(r, 2)), 'want');
+  fillResPick(els.panel.querySelector('[data-row="want"]'), E.RESOURCES, (r) => r === want, (r, b) => b.appendChild(resIcon(r)), 'want');
   fillOtherPick(els.panel.querySelector('[data-row="other"]'), other);
   fillStepperRow(els.panel.querySelector('[data-row="pgive"]'), pGive, (r) => p.resources[r], 'pg');
   fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => game.players[other].resources[r], 'pw');
@@ -642,7 +670,7 @@ function fillStepperRow(container, obj, max, prefix) {
   E.RESOURCES.forEach((r) => {
     const span = document.createElement('span');
     span.className = 'stepper';
-    span.appendChild(icon(r, 2));
+    span.appendChild(resIcon(r));
     const dec = document.createElement('button'); dec.dataset.act = `${prefix}dec`; dec.dataset.res = r; dec.textContent = '−';
     const b = document.createElement('b'); b.textContent = obj[r];
     const inc = document.createElement('button'); inc.dataset.act = `${prefix}inc`; inc.dataset.res = r; inc.textContent = '＋';
@@ -681,11 +709,11 @@ function renderYearOfPlentyPanel() {
   els.panel.innerHTML = `<h2>収穫: 好きな資源を2つ選ぶ（${picked.length}/2）</h2>
     <div class="res-pick" data-row="pick"></div>
     <p>選んだ: ${picked.length ? '' : 'なし'}</p>
-    <button class="pixel-btn pixel-btn--accent" data-act="confirm" ${picked.length === 2 ? '' : 'disabled'}>受け取る</button>
+    <button class="btn btn--accent" data-act="confirm" ${picked.length === 2 ? '' : 'disabled'}>受け取る</button>
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
-  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(icon(r, 2)), 'pick');
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'pick');
   const p = els.panel.querySelector('p');
-  picked.forEach((r) => p.appendChild(icon(r, 2)));
+  picked.forEach((r) => p.appendChild(resIcon(r)));
   bindPanel({
     pick: (b) => { if (picked.length < 2) { picked.push(b.dataset.res); renderPanel(); } },
     confirm: () => {
@@ -699,7 +727,7 @@ function renderMonopolyPanel() {
   els.panel.innerHTML = `<h2>独占: 総取りする資源を選ぶ</h2>
     <div class="res-pick" data-row="pick"></div>
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
-  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(icon(r, 2)), 'pick');
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'pick');
   bindPanel({
     pick: (b) => { E.playMonopoly(game, ui.data.cardIdx, b.dataset.res); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
@@ -709,7 +737,7 @@ function renderMonopolyPanel() {
 // devRoad2 で「終わってもよい」を押せるように
 function renderDevRoadFinish() {
   els.panel.innerHTML = `<h2>街道建設</h2><p class="sheet__row">2本目の道を置くか、ここで終わってください。</p>
-    <button class="pixel-btn pixel-btn--accent" data-act="finish">1本だけで終わる</button>
+    <button class="btn btn--accent" data-act="finish">1本だけで終わる</button>
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
   bindPanel({
     finish: () => { E.playRoadBuilding(game, ui.data.cardIdx, ui.data.edges); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
@@ -724,10 +752,9 @@ function renderActionBar() {
   const rollable = game.phase === 'roll';
   const buildable = game.phase === 'main';
   els.diceBtn.disabled = !rollable;
-  els.diceBtn.textContent = rollable ? 'サイコロ' : (game.phase === 'main' ? 'サイコロ済' : 'サイコロ');
   els.tradeBtn.disabled = !buildable;
   els.devBtn.disabled = !buildable;
-  { const n = game.players[E.currentPlayer(game)].devCards.filter((c) => !c.played).length; els.devBtn.textContent = `発展${n ? ` ${n}` : ''}`; }
+  { const n = game.players[E.currentPlayer(game)].devCards.filter((c) => !c.played).length; els.devBtn.textContent = `発展カード${n ? ` ${n}` : ''}`; }
   els.endTurnBtn.disabled = !buildable;
 }
 els.diceBtn.addEventListener('click', () => {
@@ -803,6 +830,7 @@ function renderAll() {
   renderBoardInto(els.board, game, ui);
   renderDice();
   renderPlayers();
+  renderBank();
   renderHand();
   renderBuildGrid();
   renderBanner();

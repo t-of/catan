@@ -23,7 +23,7 @@ export const COSTS = {
 const DEV_COUNTS = { knight: 14, vp: 5, roadBuilding: 2, yearOfPlenty: 2, monopoly: 2 };
 export const DEV_LABEL = { knight: '騎士', vp: '勝利点', roadBuilding: '街道建設', yearOfPlenty: '収穫', monopoly: '独占' };
 
-export const PLAYER_COLORS = ['#e6543c', '#3c7ae6', '#e6c93c', '#3ca85e'];
+export const PLAYER_COLORS = ['#e0553f', '#3f7ee0', '#f0c43c', '#46a86a'];
 
 const HEX_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]; // 隣の軸座標の差
 
