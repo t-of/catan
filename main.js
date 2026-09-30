@@ -86,7 +86,7 @@ els.playerCountPicker.addEventListener('click', (e) => {
 });
 els.startBtn.addEventListener('click', () => {
   game = E.createGame(playerCount, Math.random);
-  ui = { mode: 'setup', data: {} };
+  ui = { mode: modeForPhase(), data: {} };
   els.setupPanel.hidden = true;
   els.gamePanel.hidden = false;
   save('game', game);
@@ -217,7 +217,7 @@ function renderBoard() {
     }
   });
   // 盗賊を置ける場所（ハイライトはタイル自体をクリックできるようにする）
-  if (ui.mode === 'moveRobber') {
+  if (ui.mode === 'moveRobber' || ui.mode === 'devKnightHex') {
     game.board.hexes.forEach((hex) => {
       if (hex.id === game.board.robberHex) return;
       const pts = hex.vertexIds.map((id) => { const v = game.board.vertices[id]; return `${v.x * SCALE},${v.y * SCALE}`; }).join(' ');
@@ -310,7 +310,7 @@ function renderPanel() {
     renderDiscardPanel();
     return;
   }
-  if (ui.mode === 'robberTarget' || (game.phase === 'moveRobber' && ui.data.pendingHex != null)) {
+  if (ui.data.pendingHex != null) {
     renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev);
     return;
   }
@@ -567,7 +567,6 @@ function onHexTap(hid) {
 }
 
 // devRoad2 で「終わってもよい」を押せるように、盤面ボタンの下に確定ボタンを足す
-const origPanel = renderPanel;
 function renderDevRoadFinish() {
   if (ui.mode !== 'devRoad2') return;
   els.panel.hidden = false;
