@@ -138,7 +138,7 @@ function dieEl(value, rotateDeg) {
   wrap.className = 'die';
   wrap.style.transform = `rotate(${rotateDeg}deg)`;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', 46); svg.setAttribute('height', 46);
+  svg.setAttribute('width', 40); svg.setAttribute('height', 40); svg.setAttribute('viewBox', '0 0 46 46');
   const PIPS = {
     1: [[23, 23]], 2: [[14, 14], [32, 32]], 3: [[13, 13], [23, 23], [33, 33]],
     4: [[14, 14], [32, 14], [14, 32], [32, 32]], 5: [[13, 13], [33, 13], [23, 23], [13, 33], [33, 33]],
@@ -154,6 +154,7 @@ function dieEl(value, rotateDeg) {
 }
 
 let game = null;
+let rolling = false; // サイコロを振るアニメの途中。この間は目の表示をアニメに任せる
 let playerCount = load('playerCount', 3) === 4 ? 4 : 3;
 let ui = { mode: 'idle', data: {} };
 
@@ -558,6 +559,7 @@ function renderHand() {
 }
 
 function renderDice() {
+  if (rolling) return;
   els.diceBox.innerHTML = '';
   if (!game.diceLast) return;
   els.diceBox.appendChild(dieEl(game.diceLast[0], -8));
@@ -889,18 +891,35 @@ function humansTurn() {
 function renderActionBar() {
   const rollable = game.phase === 'roll' && humansTurn();
   const buildable = game.phase === 'main' && humansTurn();
-  els.diceBtn.disabled = !rollable;
+  els.diceBtn.disabled = !rollable || rolling;
   els.tradeBtn.disabled = !buildable;
   els.devBtn.disabled = !buildable;
   { const n = game.players[E.currentPlayer(game)].devCards.filter((c) => !c.played).length; els.devBtn.textContent = `発展カード${n ? ` ${n}` : ''}`; }
   els.endTurnBtn.disabled = !buildable;
 }
 els.diceBtn.addEventListener('click', () => {
-  if (game.phase !== 'roll' || !humansTurn()) return;
-  E.rollDice(game);
-  ui = { mode: modeForPhase(), data: {} };
-  playEvents();
-  persistAndRender();
+  if (rolling || game.phase !== 'roll' || !humansTurn()) return;
+  const finish = () => {
+    rolling = false;
+    E.rollDice(game);
+    ui = { mode: modeForPhase(), data: {} };
+    playEvents();
+    persistAndRender();
+  };
+  if (document.documentElement.classList.contains('motion-off')) { finish(); return; }
+  // ルーレットのように目を入れ替え、だんだん遅くして止める
+  rolling = true;
+  els.diceBtn.disabled = true;
+  const face = () => 1 + Math.floor(Math.random() * 6);
+  let delay = 40;
+  const spin = () => {
+    els.diceBox.innerHTML = '';
+    els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
+    els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
+    delay *= 1.25;
+    if (delay < 260) setTimeout(spin, delay); else finish();
+  };
+  spin();
 });
 els.tradeBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'tradeMenu', data: {} }; renderAll(); });
 els.devBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'devMenu', data: {} }; renderAll(); });
