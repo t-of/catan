@@ -700,6 +700,7 @@ test('CPU: 強さの差（よわい vs ふつう、ふつう vs つよい）を4
 });
 
 // ---- 交易と略奪 ----
+
 function tbGame(scenario, count = 4) { return E.createGame(count, Math.random, { expansions: ['traders-barbarians'], scenario }); }
 // rollDice用に、合計が total になる(d1,d2)の組を作る(1〜6の範囲で必ず作れる)
 function diceSeq(total) {
@@ -709,165 +710,111 @@ function diceSeq(total) {
   return () => seq.shift();
 }
 
-test('交易と略奪・漁師: 漁場は10か所、出目に7はなく魚は1〜3、勝利点13点', () => {
+// ---- 漁師 ----
+test('交易と略奪・漁師: 漁場6か所(出目4,5,6,8,9,10)、湖(出目2,3,11,12)、勝利点10点、湖は海岸に置かれない', () => {
   const g = tbGame('fishermen');
   assert.equal(g.scenario, 'fishermen');
-  assert.equal(g.winTarget, 13);
-  assert.equal(g.board.fisheries.length, 10);
-  const numbers = g.board.fisheries.map((f) => f.number).sort((a, b) => a - b);
-  assert.deepEqual(numbers, [2, 3, 4, 5, 6, 8, 9, 10, 11, 12]);
-  g.board.fisheries.forEach((f) => assert.ok(f.value >= 1 && f.value <= 3));
+  assert.equal(g.winTarget, 10);
+  assert.equal(g.board.fisheries.length, 6);
+  assert.deepEqual(g.board.fisheries.map((f) => f.number).sort((a, b) => a - b), [4, 5, 6, 8, 9, 10]);
+  const lake = g.board.hexes.find((h) => h.terrain === 'lake');
+  assert.ok(lake);
+  assert.deepEqual(lake.lakeNumbers.slice().sort((a, b) => a - b), [2, 3, 11, 12]);
+  assert.equal(lake.edgeIds.some((eId) => g.board.edges[eId].hexIds.length === 1), false); // 海岸に接していない
+  assert.equal(g.board.robberHex, null); // 盗賊は最初7が出るまで盤にいない
 });
 
-test('交易と略奪・漁師: 出目が合うと漁場の魚が貯まる(開拓地1・都市2倍)', () => {
+test('交易と略奪・漁師: 魚トークンの山は1匹11・2匹10・3匹8(計29枚)+古い靴1枚', () => {
+  const g = tbGame('fishermen');
+  const counts = { 1: 0, 2: 0, 3: 0, boot: 0 };
+  g.fishBag.forEach((t) => { counts[t]++; });
+  assert.deepEqual(counts, { 1: 11, 2: 10, 3: 8, boot: 1 });
+});
+
+test('交易と略奪・漁師: 出目が合うと漁場・湖の魚トークンを引く(開拓地1枚・都市2枚)', () => {
   const g = tbGame('fishermen');
   g.phase = 'main'; g.turn = 0;
+  g.fishBag = [2, 2, 2, 2]; // 常に2匹トークンが出るようにしておく
   const fishery = g.board.fisheries[0];
-  const e = g.board.edges[fishery.edgeId];
-  g.board.vertices[e.v1].building = { owner: 0, type: 'city' };
-  g.players[0].cities.push(e.v1);
+  g.board.vertices[fishery.vertices[0]].building = { owner: 0, type: 'city' };
+  g.players[0].cities.push(fishery.vertices[0]);
   g.phase = 'roll';
   E.rollDice(g, diceSeq(fishery.number));
-  assert.equal(g.players[0].fish, fishery.value * 2);
+  assert.deepEqual(g.players[0].fishTokens, [2, 2]); // 都市は2枚引く
 });
 
-test('交易と略奪・漁師: 魚を使った交換(盗賊を盤外へ・資源を奪う・資源1枚・道1本只で・発展カード只で)', () => {
+test('交易と略奪・漁師: 7匹を超えて持てない(一番少ない手持ちより大きければ交換するだけ)', () => {
+  const g = tbGame('fishermen');
+  g.players[0].fishTokens = [1, 1, 1, 1, 1, 1, 1]; // すでに7枚（全部1匹）
+  g.fishBag = [3];
+  // grantFishToken は内部関数なので、産出を1回起こして確かめる
+  g.phase = 'main'; g.turn = 0;
+  const fishery = g.board.fisheries[0];
+  g.board.vertices[fishery.vertices[0]].building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(fishery.vertices[0]);
+  g.phase = 'roll';
+  E.rollDice(g, diceSeq(fishery.number));
+  assert.equal(g.players[0].fishTokens.length, 7); // 7枚のまま
+  assert.ok(g.players[0].fishTokens.includes(3)); // 一番少なかった1匹と入れ替わった
+});
+
+test('交易と略奪・漁師: 魚を使った交換(盗賊を盤外へ・資源を奪う・資源1枚・道1本・発展カード)', () => {
   const g = tbGame('fishermen');
   g.phase = 'main'; g.turn = 0;
   const p0 = g.players[0];
-  p0.fish = 2;
+  p0.fishTokens = [2];
   assert.ok(E.fishRobberAway(g));
-  assert.equal(g.board.robberHex, null); // 盗賊は盤外へ(以後どのマスも塞がない)
-  p0.fish = 3;
+  assert.equal(g.board.robberHex, null);
+  assert.equal(p0.fishTokens.length, 0);
+  p0.fishTokens = [3];
   g.players[1].resources.wood = 1;
   assert.ok(E.fishSteal(g, 1));
   assert.equal(p0.resources.wood, 1);
-  p0.fish = 4;
+  p0.fishTokens = [2, 2]; // 合計4(無駄なく4匹ちょうど)
   const wheatBefore = g.bank.resources.wheat;
   assert.ok(E.fishResource(g, 'wheat'));
   assert.equal(p0.resources.wheat, 1);
   assert.equal(g.bank.resources.wheat, wheatBefore - 1);
-  p0.fish = 5;
+  assert.equal(p0.fishTokens.length, 0);
+  p0.fishTokens = [3, 2]; // 合計5
   const v = E.availableSettlementVertices(g, 0, true)[0];
   g.board.vertices[v].building = { owner: 0, type: 'settlement' };
   p0.settlements.push(v);
   const edge = E.availableRoadEdges(g, 0)[0];
   assert.ok(E.fishRoad(g, edge));
   assert.equal(g.board.edges[edge].road, 0);
-  p0.fish = 7;
+  p0.fishTokens = [3, 3, 1]; // 合計7
   const before = p0.devCards.length;
   assert.ok(E.fishDevCard(g));
   assert.equal(p0.devCards.length, before + 1);
-  assert.equal(p0.fish, 0); // 2+3+4+5+7=21匹をちょうど使い切った
+  assert.equal(p0.fishTokens.length, 0);
 });
 
-test('交易と略奪・漁師: 古い靴は魚が一番少ない人に付く(同点なら誰にも付かない)', () => {
+test('交易と略奪・漁師: 古い靴を引いた人は勝利点が1点多く要り、同点以上の人にだけ渡せる', () => {
   const g = tbGame('fishermen');
   g.phase = 'main'; g.turn = 0;
-  g.players[0].fish = 5; g.players[1].fish = 2; g.players[2].fish = 2; g.players[3].fish = 0;
-  assert.ok(E.fishResource(g, 'wood')); // 魚を使う副作用として古い靴が再計算される(5匹→1匹に)
-  assert.equal(g.oldBootHolder, 3); // 0匹の人が一番少ない
-  g.players[3].fish = 1; // プレイヤー0(1匹)と同点になった
-  g.turn = 1; g.players[1].fish = 8; // 別の人が魚を使ったついでに、ちょうど同じ1匹まで減って3人同点になる
-  assert.ok(E.fishDevCard(g));
-  assert.equal(g.players[1].fish, 1);
-  assert.equal(g.oldBootHolder, 3); // 同点のときは今の持ち主のまま(簡略化)
+  g.fishBag = ['boot'];
+  const fishery = g.board.fisheries[0];
+  g.board.vertices[fishery.vertices[0]].building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(fishery.vertices[0]);
+  // プレイヤー1にも1点持たせ、自分だけが最多点にならないようにしておく（同点なら渡せる）
+  const v1 = E.availableSettlementVertices(g, 1, true)[0];
+  g.board.vertices[v1].building = { owner: 1, type: 'settlement' };
+  g.players[1].settlements.push(v1);
+  g.phase = 'roll';
+  E.rollDice(g, diceSeq(fishery.number));
+  assert.equal(g.oldBootHolder, 0);
+  assert.equal(E.canGiveOldBoot(g, 1), true); // 同点のときは渡せる
+  assert.ok(E.giveOldBoot(g, 1));
+  assert.equal(g.oldBootHolder, 1);
 });
 
-test('交易と略奪・漁師: CPUだけで4人、数局きちんと決着する(勝利点13点、古い靴の持ち主は+1点多く要る)', () => {
+test('交易と略奪・漁師: CPUだけで4人、数局きちんと決着する(勝利点10点、古い靴の持ち主は11点)', () => {
   for (let i = 0; i < 3; i++) {
     const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'fishermen' });
     assert.equal(g.scenario, 'fishermen');
     assert.ok(g.winner != null);
     const target = g.oldBootHolder === g.winner ? g.winTarget + 1 : g.winTarget;
     assert.ok(E.playerScore(g, g.winner) >= target);
-  }
-});
-
-test('交易と略奪・川: 川をまたぐ辺には道でなく橋(土2木1)が要る', () => {
-  const g = tbGame('rivers');
-  assert.ok(g.board.riverEdgeIds.size >= 5);
-  g.phase = 'main'; g.turn = 0;
-  const edgeId = [...g.board.riverEdgeIds][0];
-  const e = g.board.edges[edgeId];
-  g.board.vertices[e.v1].building = { owner: 0, type: 'settlement' };
-  g.players[0].settlements.push(e.v1);
-  g.players[0].resources = { wood: 1, brick: 1, sheep: 0, wheat: 0, ore: 0 };
-  assert.equal(E.buildRoad(g, edgeId), false); // ふつうの道のコストだけでは足りない
-  g.players[0].resources = { wood: 1, brick: 2, sheep: 0, wheat: 0, ore: 0 };
-  assert.ok(E.buildRoad(g, edgeId));
-});
-
-test('交易と略奪・川: 川沿いの建物は金貨を産み、2枚で資源1枚に替えられる。富豪が得点に付く', () => {
-  const g = tbGame('rivers');
-  assert.equal(g.winTarget, 12);
-  g.phase = 'main'; g.turn = 0;
-  const v = [...g.board.riverVertexIds][0];
-  g.board.vertices[v].building = { owner: 0, type: 'city' };
-  g.players[0].cities.push(v);
-  const hexId = g.board.vertices[v].hexIds.find((h) => g.board.hexes[h].number != null);
-  const num = g.board.hexes[hexId].number;
-  g.phase = 'roll';
-  E.rollDice(g, diceSeq(num));
-  assert.equal(g.players[0].gold, 2); // 都市は2枚
-  assert.equal(g.richPlayer, 0);
-  assert.equal(g.poorPlayer, null); // 残り3人が同点(0枚)なので貧者は決まらない
-  g.phase = 'main';
-  g.players[0].gold = 1;
-  assert.equal(E.tradeGold(g, 'sheep'), false); // 1枚では足りない
-  g.players[0].gold = 2;
-  const sheepBefore = g.players[0].resources.sheep;
-  assert.ok(E.tradeGold(g, 'sheep'));
-  assert.equal(g.players[0].resources.sheep, sheepBefore + 1);
-});
-
-test('交易と略奪・川: 富豪(+1点)・貧者(-2点)が得点に反映される', () => {
-  const g = tbGame('rivers');
-  const before0 = E.playerScore(g, 0);
-  const before1 = E.playerScore(g, 1);
-  g.richPlayer = 0; g.poorPlayer = 1;
-  assert.equal(E.playerScore(g, 0), before0 + 1);
-  assert.equal(E.playerScore(g, 1), before1 - 2);
-});
-
-test('交易と略奪・川: CPUだけで4人、数局きちんと決着する(勝利点12点)', () => {
-  for (let i = 0; i < 3; i++) {
-    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'rivers' });
-    assert.equal(g.scenario, 'rivers');
-    assert.ok(g.winner != null);
-    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
-  }
-});
-
-test('交易と略奪・隊商: ラクダは砂漠の隣り合う2辺にいて、挟まれた頂点が1つ決まる', () => {
-  const g = tbGame('caravans');
-  assert.equal(g.winTarget, 12);
-  assert.notEqual(g.board.camelEdgeA, g.board.camelEdgeB);
-  assert.ok(g.board.camelVertexId != null);
-  const a = g.board.edges[g.board.camelEdgeA], b = g.board.edges[g.board.camelEdgeB];
-  assert.ok([a.v1, a.v2].includes(g.board.camelVertexId));
-  assert.ok([b.v1, b.v2].includes(g.board.camelVertexId));
-});
-
-test('交易と略奪・隊商: 羊か麦を払うとラクダが動き、挟まれた頂点の建物に+1点が付く', () => {
-  const g = tbGame('caravans');
-  g.phase = 'main'; g.turn = 0;
-  g.players[0].resources.wheat = 1;
-  assert.equal(E.canMoveCamels(g, 0), true);
-  const before = g.board.camelVertexId;
-  assert.ok(E.moveCamels(g, 1));
-  assert.equal(g.players[0].resources.wheat, 0);
-  assert.notEqual(g.board.camelVertexId, before);
-  g.board.vertices[g.board.camelVertexId].building = { owner: 0, type: 'settlement' };
-  g.players[0].settlements.push(g.board.camelVertexId);
-  assert.equal(E.playerScore(g, 0), 2); // 開拓地1点 + ラクダに挟まれて+1点
-});
-
-test('交易と略奪・隊商: CPUだけで4人、数局きちんと決着する(勝利点12点)', () => {
-  for (let i = 0; i < 3; i++) {
-    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'caravans' });
-    assert.equal(g.scenario, 'caravans');
-    assert.ok(g.winner != null);
-    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
   }
 });

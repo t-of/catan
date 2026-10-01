@@ -6,8 +6,11 @@
 
 export const RESOURCES = ['wood', 'brick', 'sheep', 'wheat', 'ore'];
 export const RESOURCE_LABEL = { wood: '木材', brick: '土', sheep: '羊', wheat: '麦', ore: '鉄' };
-export const TERRAIN_LABEL = { forest: '森', hills: '丘', pasture: '牧草', field: '畑', mountains: '山', desert: '砂漠', water: '海', gold: '金の川' };
-const TERRAIN_RESOURCE = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore', desert: null, water: null, gold: null };
+export const TERRAIN_LABEL = {
+  forest: '森', hills: '丘', pasture: '牧草', field: '畑', mountains: '山', desert: '砂漠', water: '海', gold: '金の川',
+  lake: '湖', castle: '砦', // 交易と略奪: 漁師の湖、蛮族の襲撃の砦（どちらも産出しない）
+};
+const TERRAIN_RESOURCE = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore', desert: null, water: null, gold: null, lake: null, castle: null };
 const TERRAIN_COUNTS = { forest: 4, hills: 3, pasture: 4, field: 4, mountains: 3, desert: 1 };
 const NUMBER_TOKENS = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
 const PORT_TYPES = ['3:1', '3:1', '3:1', '3:1', 'wood', 'brick', 'sheep', 'wheat', 'ore'];
@@ -83,14 +86,27 @@ const PROGRESS_HAND_LIMIT = 4;
 const EVENT_FACES = ['barbarian', 'barbarian', 'barbarian', 'trade', 'politics', 'science']; // 事件のサイコロ（3つめ）
 const BARBARIAN_ATTACK_AT = 7;
 
-// ---- 交易と略奪（公式の簡略版。3〜4人・基本盤だけに対応。蛮族の襲来は実装せず README に注記） ----
-export const TB_SCENARIOS = ['fishermen', 'rivers', 'caravans'];
-export const TB_SCENARIO_LABEL = { fishermen: '漁師', rivers: '川', caravans: '隊商' };
-// 魚の数は出目の起きやすさ（ピップ数）に応じた自作の配分（公式資料を確認できず近似。README に注記）
-const FISH_NUMBER_VALUE = { 2: 1, 3: 1, 4: 2, 5: 2, 6: 3, 8: 3, 9: 2, 10: 2, 11: 1, 12: 1 };
+// ---- 交易と略奪（公式ルールブック Traders & Barbarians に沿わせた簡略版。3〜4人・基本盤だけに対応） ----
+export const TB_SCENARIOS = ['fishermen', 'rivers', 'caravans', 'barbarians'];
+export const TB_SCENARIO_LABEL = { fishermen: '漁師', rivers: '川', caravans: '隊商', barbarians: '蛮族の襲撃' };
+const TB_WIN_TARGET = { fishermen: 10, rivers: 10, caravans: 12, barbarians: 12 }; // 公式どおり（漁師は古い靴を持つ人だけ+1点で11点）
+
+// 漁師: 漁場6か所（出目4,5,6,8,9,10）と、砂漠の代わりの湖（出目2,3,11,12のどれでも反応）。
+// 魚トークンは1匹11枚・2匹10枚・3匹8枚（計29枚）に古い靴1枚を混ぜ、産出のたびに引く（公式どおり）。
+const FISH_GROUND_NUMBERS = [4, 5, 6, 8, 9, 10];
+const LAKE_NUMBERS = [2, 3, 11, 12];
+const FISH_TOKEN_COUNTS = { 1: 11, 2: 10, 3: 8 };
+const FISH_HAND_LIMIT = 7; // 一度に7匹まで（公式どおり。超える分は、一番少ない手持ちと交換するだけ）
 export const FISH_TRADE_COST = { robberAway: 2, steal: 3, resource: 4, road: 5, devcard: 7 };
+
+// 川: 道・開拓地を川沿いに建てるたびに金貨1枚（都市への建て替えでは増えない）。橋は土2木1で、建てると金貨3枚。
 export const BRIDGE_COST = { brick: 2, wood: 1 };
-const TB_WIN_TARGET = { fishermen: 13, rivers: 12, caravans: 12 }; // 公式の値を確認できず近似（README に注記）
+const BRIDGE_GOLD = 3;
+export const MAX_BRIDGES = 3;
+const GOLD_SPENDS_PER_TURN = 2; // 金貨2枚で資源1枚の交換は、手番に2回まで
+
+// 隊商: オアシス（砂漠の代わり）から3本のキャラバンが伸びる。羊・麦を出し合う投票でラクダの行き先を決める。
+const CARAVAN_COUNT = 3;
 
 export const PLAYER_COLORS = ['#e0553f', '#3f7ee0', '#f0c43c', '#46a86a', '#8a5cc9', '#2bb0b0'];
 
@@ -244,12 +260,10 @@ function buildBoard(rng, ext) {
   return { hexes, vertices, edges, robberHex: desert.id, portEdgeIds };
 }
 
-// 交易と略奪は「都市と騎士」のような別の得点源(大都市・進歩カードの勝利点)を持たないので、
-// 盤がほぼ埋まって発展カードも尽きると、勝利点に届く手段がなくなって終わらなくなることがある。
-// 勝利点カードを少し増やし、その行き止まりが起きにくいようにする(公式の枚数とは違う簡略化。README に注記)。
-const DEV_COUNTS_TB = { knight: 14, vp: 8, roadBuilding: 2, yearOfPlenty: 2, monopoly: 2 };
-function buildDevDeck(rng, ext, tb) {
-  const counts = ext ? DEV_COUNTS_56 : (tb ? DEV_COUNTS_TB : DEV_COUNTS);
+// 蛮族の襲撃は騎士を発展カードでなく直接建てるので（README に注記）、発展カードには騎士を入れない
+const DEV_COUNTS_BARBARIANS = { vp: 5, roadBuilding: 3, yearOfPlenty: 3, monopoly: 3 };
+function buildDevDeck(rng, ext, scenario) {
+  const counts = ext ? DEV_COUNTS_56 : (scenario === 'barbarians' ? DEV_COUNTS_BARBARIANS : DEV_COUNTS);
   return shuffle(Object.entries(counts).flatMap(([t, n]) => Array(n).fill(t)), rng);
 }
 
@@ -318,18 +332,58 @@ function buildSeafarersBoard(rng) {
   return { hexes, vertices, edges, robberHex: desert.id, pirateHex, portEdgeIds, islandHexIds };
 }
 
-// 漁師: 盤の外周の辺に、出目の数字と魚の数(1〜3)を持つ漁場を付ける（港と同じ辺に重なってもよい簡略化）
+// 外周の辺を頂点の並びに変換する（orderedBoundary の辺の列を、1つずつずれた頂点の列にする）
+function boundaryVertexLoop(edges) {
+  const order = orderedBoundary(edges);
+  const verts = [];
+  let prevVertex = null;
+  order.forEach((eId, i) => {
+    const e = edges[eId];
+    if (i === 0) { verts.push(e.v1); prevVertex = e.v2; } else {
+      verts.push(prevVertex);
+      prevVertex = e.v1 === prevVertex ? e.v2 : e.v1;
+    }
+  });
+  return verts;
+}
+function hexIsCoastal(hex, board) { return hex.edgeIds.some((eId) => board.edges[eId].hexIds.length === 1); }
+
+// 漁師: 外周に6か所の漁場（出目4,5,6,8,9,10。それぞれ3つの頂点に接する）を置く
 function applyFishingGrounds(board, rng) {
-  const boundary = orderedBoundary(board.edges);
-  const numbers = shuffle(Object.keys(FISH_NUMBER_VALUE).map(Number), rng);
-  board.fisheries = []; // [{ edgeId, number, value }]
+  const loop = boundaryVertexLoop(board.edges);
+  const n = loop.length;
+  const numbers = shuffle(FISH_GROUND_NUMBERS, rng);
+  board.fisheries = []; // [{ vertices:[v,v,v], number }]
   numbers.forEach((num, i) => {
-    const edgeId = boundary[Math.round((i * boundary.length) / numbers.length)];
-    board.fisheries.push({ edgeId, number: num, value: FISH_NUMBER_VALUE[num] });
+    const c = Math.round((i * n) / numbers.length);
+    board.fisheries.push({ vertices: [loop[(c - 1 + n) % n], loop[c], loop[(c + 1) % n]], number: num });
   });
 }
+// 漁師: 砂漠を湖にする（公式どおり、湖は海岸に置けないので、砂漠が海岸のときは盤を作り直す）
+function buildFishermenBoard(rng) {
+  let board = buildBoard(rng, false);
+  let desert = board.hexes.find((h) => h.terrain === 'desert');
+  let attempt = 0;
+  while (hexIsCoastal(desert, board) && attempt < 50) {
+    board = buildBoard(rng, false);
+    desert = board.hexes.find((h) => h.terrain === 'desert');
+    attempt++;
+  }
+  desert.terrain = 'lake';
+  desert.lakeNumbers = LAKE_NUMBERS.slice();
+  board.robberHex = null; // 盗賊は盤の外にいて、最初の7で初めて盤に入る
+  applyFishingGrounds(board, rng);
+  return board;
+}
+// 漁師: 魚トークンの山（1匹11・2匹10・3匹8＝29枚＋古い靴1枚）を混ぜて作る
+function buildFishBag(rng) {
+  const entries = [];
+  Object.entries(FISH_TOKEN_COUNTS).forEach(([v, n]) => { for (let i = 0; i < n; i++) entries.push(Number(v)); });
+  entries.push('boot');
+  return shuffle(entries, rng);
+}
 
-// 川: 盤を横切る真ん中の列（r=0）の間の辺をつなげ、両端を盤の外周まで延ばす
+// 川: 盤を横切る真ん中の列（r=0）の間の辺をつなげ、両端を盤の外周まで延ばす（簡略化。README に注記）
 function applyRiver(board) {
   const row = board.hexes.filter((h) => h.r === 0).sort((a, b) => a.q - b.q);
   const riverEdgeIds = [];
@@ -347,20 +401,46 @@ function applyRiver(board) {
   board.riverVertexIds = vSet;
 }
 
-// 隊商: 砂漠のオアシスの周りにラクダの列（2辺）を置く。現在地は camelEdgeA/B と、挟まれた頂点 camelVertexId
-function recalcCamelVertex(board) {
-  const a = board.edges[board.camelEdgeA];
-  const b = board.edges[board.camelEdgeB];
-  board.camelVertexId = [a.v1, a.v2].find((v) => v === b.v1 || v === b.v2) ?? null;
-}
-function applyCaravans(board, rng) {
+// 隊商: 砂漠をオアシスとして盤の中心（必ず内陸）に固定し、周りの6辺のうち3つを各キャラバンの出発点にする
+function buildCaravansBoard(rng) {
+  const board = buildBoard(rng, false);
+  const center = board.hexes.find((h) => h.q === 0 && h.r === 0);
   const desert = board.hexes.find((h) => h.terrain === 'desert');
-  const start = Math.floor(rng() * 6);
-  board.camelHexId = desert.id;
-  board.camelEdgeA = desert.edgeIds[start];
-  board.camelEdgeB = desert.edgeIds[(start + 1) % 6];
-  recalcCamelVertex(board);
+  if (center.id !== desert.id) {
+    const ct = center.terrain, cn = center.number;
+    center.terrain = desert.terrain; center.number = desert.number;
+    desert.terrain = ct; desert.number = cn;
+  }
+  board.oasisHexId = center.id;
+  board.camelStartEdges = [center.edgeIds[0], center.edgeIds[2], center.edgeIds[4]]; // 3本の矢印（物理コマの向きは任意なのでこの3辺とする）
+  board.caravans = [[], [], []]; // キャラバンごとの辺IDの列（オアシス側から先頭へ）
+  board.robberHex = null; // 盗賊は盤の外にいて、最初の7で初めて盤に入る（オアシスには置かない）
+  return board;
 }
+
+// 蛮族の襲撃: 盤の中心を「砦」にする（産出せず、征服もされない。騎士は砦の6辺から出る）。
+// 本来の専用盤（砂漠+砦+沿岸の輪）は作らず、基本の19マスに砦を足す簡略化（README に注記）。
+function applyBarbarianBoard(board, rng) {
+  const castle = board.hexes.find((h) => h.q === 0 && h.r === 0);
+  const desert = board.hexes.find((h) => h.terrain === 'desert');
+  if (castle.id !== desert.id) {
+    // 砦に出目チップがあると2・12が盤から消えてしまうので、砂漠と入れ替えて数字チップを減らさない
+    const dt = desert.terrain, dn = desert.number;
+    desert.terrain = castle.terrain; desert.number = castle.number;
+    castle.terrain = dt; castle.number = dn;
+  }
+  castle.terrain = 'castle';
+  castle.number = null;
+  board.castleHexId = castle.id;
+  board.hexes.forEach((h) => { h.barbarians = 0; h.conquered = false; });
+  const two = board.hexes.find((h) => h.id !== castle.id && h.number === 2);
+  const twelve = board.hexes.find((h) => h.id !== castle.id && h.number === 12);
+  if (two) two.barbarians = 1;
+  if (twelve) twelve.barbarians = 1;
+  board.barbarianSupply = 30 - (two ? 1 : 0) - (twelve ? 1 : 0);
+  board.robberHex = null; // このシナリオでは盗賊を使わない
+}
+function barbarianTargetHexes(board) { return board.hexes.filter((h) => h.id !== board.castleHexId && h.terrain !== 'desert'); }
 
 // ================================================================
 // ゲームの作成
@@ -375,10 +455,13 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   // 交易と略奪。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士との組み合わせは作っていない）
   const tb = expansions.includes('traders-barbarians') && !ext && !seafarers && !ck;
   const scenario = tb ? (TB_SCENARIOS.includes(options.scenario) ? options.scenario : 'fishermen') : null;
-  const board = seafarers ? buildSeafarersBoard(rng) : buildBoard(rng, ext);
-  if (scenario === 'fishermen') applyFishingGrounds(board, rng);
-  else if (scenario === 'rivers') applyRiver(board);
-  else if (scenario === 'caravans') applyCaravans(board, rng);
+  let board;
+  if (seafarers) board = buildSeafarersBoard(rng);
+  else if (scenario === 'fishermen') board = buildFishermenBoard(rng);
+  else if (scenario === 'caravans') board = buildCaravansBoard(rng);
+  else board = buildBoard(rng, ext);
+  if (scenario === 'rivers') applyRiver(board);
+  else if (scenario === 'barbarians') applyBarbarianBoard(board, rng);
   const bankStart = ext ? BANK_START_56 : BANK_START;
   const players = Array.from({ length: playerCount }, (_, i) => ({
     idx: i,
@@ -398,18 +481,23 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     progressVp: 0,
     defenderVp: 0,
     // 交易と略奪（該当するシナリオのときだけ使う）
-    fish: scenario === 'fishermen' ? 0 : null,
-    gold: scenario === 'rivers' ? 0 : null,
+    fishTokens: scenario === 'fishermen' ? [] : null, // 持っている魚トークン（1〜3の配列）
+    gold: (scenario === 'rivers' || scenario === 'barbarians') ? 0 : null,
+    goldSpendsThisTurn: 0,
+    bridges: scenario === 'rivers' ? 0 : 0,
+    warKnights: scenario === 'barbarians' ? [] : null, // { id, edgeId }
+    prisoners: scenario === 'barbarians' ? 0 : 0,
+    pendingCamelBuilds: 0, // 隊商: この手番に建てた開拓地・都市の数（手番の終わりにラクダを置く）
   }));
   const setupOrder = Array.from({ length: playerCount }, (_, i) => i); // 1周目は順に。2周目は setup2 で逆順にする
-  return {
+  const game = {
     playerCount,
     expansions,
     players,
     board,
     bank: {
       resources: { wood: bankStart, brick: bankStart, sheep: bankStart, wheat: bankStart, ore: bankStart },
-      devDeck: ck ? [] : buildDevDeck(rng, ext, tb), // 都市と騎士では発展カードは使わない
+      devDeck: ck ? [] : buildDevDeck(rng, ext, scenario), // 都市と騎士では発展カードは使わない
       commodities: ck ? { paper: CK_BANK_COMMODITY_START, cloth: CK_BANK_COMMODITY_START, coin: CK_BANK_COMMODITY_START } : null,
     },
     phase: 'setup1', // setup1 → setup2 → roll → main / discard / goldPick / scienceBonus / moveRobber / specialBuilding → gameOver
@@ -424,9 +512,13 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     shipMovedThisTurn: false, // 航海者版: 手番に船を動かせるのは1回だけ
     scenario,
     winTarget: ck ? 13 : (seafarers ? 14 : (scenario ? TB_WIN_TARGET[scenario] : 10)),
-    richPlayer: null, // 川: 金貨が一番多い人(+1点)
-    poorPlayer: null, // 川: 金貨が一番少ない人(-2点)
+    richPlayer: null, // 川: 金貨が一番多い人だけ(+1点)
+    poorPlayers: [], // 川: 金貨が一番少ない人たち（同点なら全員）(-2点ずつ)
     oldBootHolder: null, // 漁師: 古い靴を持つ人（勝利点が+1点多く要る）
+    fishBag: scenario === 'fishermen' ? buildFishBag(rng) : null, // 魚トークンの山（伏せて混ぜてある）
+    fishUsed: scenario === 'fishermen' ? [] : null, // 使った魚トークン（山が尽きたら混ぜ直す）
+    pendingCamelVote: null, // 隊商: 投票中の情報 { order, idx, bids, remaining }
+    tbBarbarianAttacksDone: 0,
     pendingDiscards: [], // [{ player, count }]
     pendingGoldPicks: [], // 航海者版: 金の川マスで選べる資源 [{ player, count }]
     pendingScienceBonus: [], // 都市と騎士(科学3段階目): この目で何も入らなかった人の列 [playerIdx]
@@ -444,12 +536,20 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     barbarianAttacked: false, // まだ一度も蛮族が襲来していない間は、7が出ても盗賊は動かない
     eventDie: null,
   };
+  if (scenario === 'rivers') recalcGoldRoles(game); // 金貨0枚は全員同点なので、最初から全員「貧者」になる（公式どおり）
+  return game;
 }
 
 export function currentPlayer(game) {
   if (game.phase === 'setup1' || game.phase === 'setup2') return game.setupOrder[game.setupIndex];
   if (game.phase === 'specialBuilding') return game.specialBuildQueue[game.specialBuildIdx];
   return game.turn;
+}
+// 隊商の投票・配置フェイズは、動いている人が currentPlayer（手番の人）と違うことがあるので、こちらを使う
+export function actingPlayer(game) {
+  if (game.phase === 'camelVote' && game.pendingCamelVote) return game.pendingCamelVote.order[game.pendingCamelVote.idx];
+  if (game.phase === 'camelPlace') return game.camelDecider;
+  return currentPlayer(game);
 }
 
 function log(game, text) { game.log.push(text); if (game.log.length > 200) game.log.shift(); }
@@ -459,49 +559,47 @@ function fire(game, evt) { game.events.push(evt); }
 export function devVpCount(player) { return player.devCards.filter((c) => c.type === 'vp').length; }
 export function playerScore(game, idx) {
   const p = game.players[idx];
-  let score = p.settlements.length + p.cities.length * 2
+  // 蛮族の襲撃: 征服された開拓地・都市は勝利点にならない（公式どおり）
+  const isConquered = (vid) => { const b = game.board.vertices[vid].building; return b && b.conquered; };
+  const buildingScore = game.scenario === 'barbarians'
+    ? p.settlements.filter((v) => !isConquered(v)).length + p.cities.filter((v) => !isConquered(v)).length * 2
+    : p.settlements.length + p.cities.length * 2;
+  let score = buildingScore
     + (game.longestRoadPlayer === idx ? 2 : 0)
-    + (game.largestArmyPlayer === idx ? 2 : 0)
+    + (game.scenario !== 'barbarians' && game.largestArmyPlayer === idx ? 2 : 0) // 蛮族の襲撃では「最大騎士力」は使わない（公式どおり）
     + devVpCount(p)
     + (p.islandBonus ? 2 : 0);
   if (game.metropolis) {
     TRACKS.forEach((t) => { if (metropolisOwner(game, t) === idx) score += 2; }); // 大都市+2点（1人1系統まで）
     score += (p.progressVp || 0) + (p.defenderVp || 0);
   }
-  if (game.scenario === 'rivers') score += (game.richPlayer === idx ? 1 : 0) + (game.poorPlayer === idx ? -2 : 0);
-  if (game.scenario === 'caravans' && game.board.camelVertexId != null) {
-    const v = game.board.vertices[game.board.camelVertexId];
-    if (v.building && v.building.owner === idx) score += 1; // ラクダに挟まれた頂点
+  if (game.scenario === 'rivers') {
+    score += (game.richPlayer === idx ? 1 : 0) - ((game.poorPlayers || []).includes(idx) ? 2 : 0);
+  }
+  if (game.scenario === 'caravans') {
+    score += caravanVertexBonus(game, idx);
+  }
+  if (game.scenario === 'barbarians') {
+    score += Math.floor((p.prisoners || 0) / 2); // 捕虜2人につき勝利点1
   }
   return score;
 }
 function checkWin(game, idx) {
   if (game.winner != null) return;
-  // 漁師: 古い靴を持つ人は勝利点が1点多く要る
+  // 漁師: 古い靴を持つ人は勝利点が1点多く要る（公式どおり。10点が標準、古い靴は11点）
   const target = (game.scenario === 'fishermen' && game.oldBootHolder === idx) ? (game.winTarget || 10) + 1 : (game.winTarget || 10);
   if (playerScore(game, idx) >= target) { game.winner = idx; game.phase = 'gameOver'; fire(game, 'win'); log(game, `プレイヤー${idx + 1}の勝ち！`); }
 }
-// 漁師: 魚が一番少ない人が古い靴を持つ（全員同じなら誰も持たない。同点のままなら今の持ち主のまま）
-// 古い靴・富豪・貧者は、自分では何も建てていない人の得点(に要る点)を変えることがあるので、
+// 古い靴・富豪・貧者・ラクダの印など、自分では何も建てていない人の得点(に要る点)を変えることがあるので、
 // ここで全員ぶん checkWin をかけ直す(でないと、その人が次に何か建てるまで勝利が見逃される)
 function checkWinAll(game) { game.players.forEach((_, i) => checkWin(game, i)); }
-function recalcOldBoot(game) {
-  const fish = game.players.map((p) => p.fish || 0);
-  const min = Math.min(...fish), max = Math.max(...fish);
-  if (min === max) { game.oldBootHolder = null; checkWinAll(game); return; }
-  const holders = fish.map((f, i) => (f === min ? i : -1)).filter((i) => i >= 0);
-  if (holders.length === 1) game.oldBootHolder = holders[0];
-  checkWinAll(game);
-}
-// 川: 金貨が一番多い人(+1点)・一番少ない人(-2点)。同点のときは誰にも付けない
+// 川: 金貨が一番多い人だけ「富豪」(+1点)。一番少ない人は「貧者」(-2点)で、同点なら全員が貧者になる（公式どおり）
 function recalcGoldRoles(game) {
   const gold = game.players.map((p) => p.gold || 0);
   const max = Math.max(...gold), min = Math.min(...gold);
-  if (max === min) { game.richPlayer = null; game.poorPlayer = null; checkWinAll(game); return; }
   const rich = gold.map((g, i) => (g === max ? i : -1)).filter((i) => i >= 0);
-  const poor = gold.map((g, i) => (g === min ? i : -1)).filter((i) => i >= 0);
   game.richPlayer = rich.length === 1 ? rich[0] : null;
-  game.poorPlayer = poor.length === 1 ? poor[0] : null;
+  game.poorPlayers = gold.map((g, i) => (g === min ? i : -1)).filter((i) => i >= 0);
   checkWinAll(game);
 }
 // 航海者版: 小島（本島でも海でもないマス）に初めて開拓地を建てたら+2点
@@ -520,6 +618,7 @@ export function canPlaceSettlement(game, vertexId, playerIdx, isSetup) {
   if (v.building) return false;
   if (v.neighbors.some((n) => game.board.vertices[n].building)) return false; // 距離ルール
   if (!v.hexIds.some((h) => game.board.hexes[h].terrain !== 'water')) return false; // 海のど真ん中には置けない
+  if (game.scenario === 'barbarians' && !isSetup && v.hexIds.some((h) => game.board.hexes[h].conquered)) return false; // 征服されたマスの隣には建てられない
   if (isSetup) return true;
   return v.edgeIds.some((eId) => { const e = game.board.edges[eId]; return e.road === playerIdx || e.ship === playerIdx; });
 }
@@ -533,6 +632,7 @@ export function canPlaceRoad(game, edgeId, playerIdx) {
   const e = game.board.edges[edgeId];
   if (e.road != null || e.ship != null) return false;
   if (!edgeTouchesLand(e, game.board.hexes)) return false;
+  if (game.scenario === 'barbarians' && e.hexIds.some((h) => game.board.hexes[h].conquered)) return false; // 征服されたマスの隣には道を通せない
   return [e.v1, e.v2].some((vid) => {
     const v = game.board.vertices[vid];
     if (v.building && v.building.owner === playerIdx) return true;
@@ -634,9 +734,12 @@ export function setupPlaceSettlement(game, vertexId) {
   if (game.phase !== 'setup1' && game.phase !== 'setup2') return false;
   if (game.setupPending !== 'settlement') return false;
   if (!canPlaceSettlement(game, vertexId, idx, true)) return false;
-  game.board.vertices[vertexId].building = { owner: idx, type: 'settlement' };
-  game.players[idx].settlements.push(vertexId);
+  // 蛮族の襲撃: 2つ目は最初から都市にする（公式どおり。もらう資源は都市でも1枚のまま＝setupPlaceRoad側で対応）
+  const asCity = game.scenario === 'barbarians' && game.phase === 'setup2';
+  game.board.vertices[vertexId].building = { owner: idx, type: asCity ? 'city' : 'settlement' };
+  if (asCity) game.players[idx].cities.push(vertexId); else game.players[idx].settlements.push(vertexId);
   markIslandBonus(game, idx, vertexId);
+  grantRiverGold(game, idx, vertexId, 'vertex');
   game.setupLastVertex = vertexId;
   game.setupPending = 'road';
   fire(game, 'build');
@@ -652,13 +755,14 @@ export function setupPlaceRoad(game, edgeId) {
   if (e.v1 !== game.setupLastVertex && e.v2 !== game.setupLastVertex) return false;
   e.road = idx;
   game.players[idx].roads.push(edgeId);
+  grantRiverGold(game, idx, edgeId, 'edge');
   fire(game, 'build');
   if (game.phase === 'setup2') {
     const v = game.board.vertices[game.setupLastVertex];
     v.hexIds.forEach((hId) => {
       const hex = game.board.hexes[hId];
       const res = TERRAIN_RESOURCE[hex.terrain];
-      if (res) game.players[idx].resources[res]++;
+      if (res) game.players[idx].resources[res]++; // 蛮族の襲撃で2つ目が都市でも、資源は1枚のまま（公式どおり）
     });
   }
   game.setupIndex++;
@@ -679,30 +783,25 @@ function advanceIdx(game, idx) { return (idx + 1) % game.playerCount; }
 
 // ---- 資源の産出 ----
 function distributeResources(game, total) {
-  if (game.scenario === 'fishermen' && game.board.fisheries) {
-    game.board.fisheries.forEach((f) => {
+  if (game.scenario === 'fishermen') {
+    (game.board.fisheries || []).forEach((f) => {
       if (f.number !== total) return; // 漁場は盗賊の影響を受けない（盗賊は陸のマスにしか置けないため）
-      const e = game.board.edges[f.edgeId];
-      [e.v1, e.v2].forEach((vid) => {
+      f.vertices.forEach((vid) => {
         const v = game.board.vertices[vid];
         if (!v.building) return;
-        const amt = f.value * (v.building.type === 'city' ? 2 : 1);
-        game.players[v.building.owner].fish += amt;
+        grantFishToken(game, v.building.owner);
+        if (v.building.type === 'city') grantFishToken(game, v.building.owner);
       });
     });
-    recalcOldBoot(game);
-  }
-  if (game.scenario === 'rivers' && game.board.riverVertexIds) {
-    game.board.hexes.forEach((hex) => {
-      if (hex.number !== total || hex.id === game.board.robberHex) return;
-      hex.vertexIds.forEach((vid) => {
-        if (!game.board.riverVertexIds.has(vid)) return;
+    const lake = game.board.hexes.find((h) => h.terrain === 'lake');
+    if (lake && lake.lakeNumbers.includes(total)) {
+      lake.vertexIds.forEach((vid) => {
         const v = game.board.vertices[vid];
         if (!v.building) return;
-        game.players[v.building.owner].gold += v.building.type === 'city' ? 2 : 1;
+        grantFishToken(game, v.building.owner);
+        if (v.building.type === 'city') grantFishToken(game, v.building.owner);
       });
-    });
-    recalcGoldRoles(game);
+    }
   }
   const ck = !!game.bank.commodities;
   const before = game.players.map((p) => sumRes(p.resources) + sumCommodities(p.commodities));
@@ -712,7 +811,7 @@ function distributeResources(game, total) {
   const commodityContribs = [];
   const goldDemand = {}; // 金の川マス: 資源は確定させず、あとで本人に選ばせる（player → 枚数）
   game.board.hexes.forEach((hex) => {
-    if (hex.number !== total || hex.id === game.board.robberHex) return;
+    if (hex.number !== total || hex.id === game.board.robberHex || hex.conquered) return; // 蛮族の襲撃: 征服されたマスは産出しない
     if (hex.terrain === 'gold') {
       hex.vertexIds.forEach((vid) => {
         const v = game.board.vertices[vid];
@@ -822,7 +921,7 @@ export function rollDice(game, rng = Math.random) {
       .filter((p) => sumRes(p.resources) > discardThreshold(p))
       .map((p) => ({ player: game.players.indexOf(p), count: Math.floor(sumRes(p.resources) / 2) }));
     if (game.pendingDiscards.length) game.phase = 'discard';
-    else game.phase = (ck && !game.barbarianAttacked) ? 'main' : 'moveRobber'; // 最初の蛮族襲来までは盗賊が動かない
+    else game.phase = phaseAfterSeven(game); // 最初の蛮族襲来までは盗賊が動かない（都市と騎士）。蛮族の襲撃では盗賊の代わりに相手を選んで奪う
   } else {
     distributeResources(game, total);
     game.phase = game.pendingGoldPicks.length ? 'goldPick' : (game.pendingScienceBonus.length ? 'scienceBonus' : 'main');
@@ -840,10 +939,27 @@ export function discardCards(game, playerIdx, discardObj) {
   payCost(p.resources, discardObj);
   RESOURCES.forEach((r) => { game.bank.resources[r] += discardObj[r] || 0; });
   game.pendingDiscards = game.pendingDiscards.filter((d) => d.player !== playerIdx);
-  if (game.pendingDiscards.length === 0) {
-    const ck = !!game.bank.commodities;
-    game.phase = (ck && !game.barbarianAttacked) ? 'main' : 'moveRobber';
-  }
+  if (game.pendingDiscards.length === 0) game.phase = phaseAfterSeven(game);
+  return true;
+}
+function phaseAfterSeven(game) {
+  const ck = !!game.bank.commodities;
+  if (ck && !game.barbarianAttacked) return 'main';
+  if (game.scenario === 'barbarians') return 'barbarianSteal'; // 蛮族の襲撃には盗賊がいないので、相手を選んで1枚奪う
+  return 'moveRobber';
+}
+// 蛮族の襲撃: 7が出たら、盗賊の代わりに相手を選んでランダムに1枚奪う（公式どおり）
+export function barbarianStealTargets(game, playerIdx) {
+  return game.players.map((_, i) => i).filter((i) => i !== playerIdx && sumRes(game.players[i].resources) > 0);
+}
+export function resolveBarbarianSteal(game, targetIdx) {
+  if (game.phase !== 'barbarianSteal') return false;
+  const idx = currentPlayer(game);
+  const targets = barbarianStealTargets(game, idx);
+  if (targets.length && !targets.includes(targetIdx)) return false;
+  if (targets.length) stealFrom(game, targetIdx, idx);
+  game.phase = 'main';
+  fire(game, 'rob');
   return true;
 }
 
@@ -901,6 +1017,9 @@ function roadLengthForPlayer(game, playerIdx) {
   if (!edges.length) return 0;
   const byId = new Map(edges.map((e) => [e.id, e]));
   const kindOf = (e) => (e.road === playerIdx ? 'road' : 'ship');
+  // 隊商: ラクダと同じ辺にある道は、最長交易路の数え方で2本ぶんになる（公式どおり）
+  const camelEdges = game.scenario === 'caravans' ? new Set(game.board.caravans.flat()) : null;
+  const weightOf = (eId) => (camelEdges && camelEdges.has(eId) ? 2 : 1);
   const adjacency = new Map();
   edges.forEach((e) => {
     [e.v1, e.v2].forEach((v) => { if (!adjacency.has(v)) adjacency.set(v, []); adjacency.get(v).push(e.id); });
@@ -925,7 +1044,7 @@ function roadLengthForPlayer(game, playerIdx) {
       // 開拓地・都市をはさまない限り、道⇔船は乗り換えられない
       if (fromId != null && !ownBuilding(vid) && kindOf(byId.get(fromId)) !== kindOf(byId.get(eId))) continue;
       visited.add(eId);
-      best = Math.max(best, 1 + extend(otherVertex(eId, vid), eId, visited));
+      best = Math.max(best, weightOf(eId) + extend(otherVertex(eId, vid), eId, visited));
       visited.delete(eId);
     }
     return best;
@@ -934,7 +1053,7 @@ function roadLengthForPlayer(game, playerIdx) {
   edges.forEach((e) => {
     [e.v1, e.v2].forEach((startV) => {
       const visited = new Set([e.id]);
-      const len = 1 + extend(otherVertex(e.id, startV), e.id, visited);
+      const len = weightOf(e.id) + extend(otherVertex(e.id, startV), e.id, visited);
       max = Math.max(max, len);
     });
   });
@@ -968,11 +1087,15 @@ export function buildRoad(game, edgeId, { free } = {}) {
   const idx = currentPlayer(game);
   const p = game.players[idx];
   if (p.roads.length >= MAX_ROADS) return false;
+  const isBridge = game.board.riverEdgeIds && game.board.riverEdgeIds.has(edgeId);
+  if (isBridge && (p.bridges || 0) >= MAX_BRIDGES) return false; // 橋は3本まで（公式どおり）
   if (!canPlaceRoad(game, edgeId, idx)) return false;
   const cost = roadCostFor(game, edgeId);
   if (!free) { if (!canAfford(p.resources, cost)) return false; payCost(p.resources, cost); RESOURCES.forEach((r) => { game.bank.resources[r] += cost[r] || 0; }); }
   game.board.edges[edgeId].road = idx;
   p.roads.push(edgeId);
+  if (isBridge) { p.bridges = (p.bridges || 0) + 1; p.gold = (p.gold || 0) + BRIDGE_GOLD; recalcGoldRoles(game); } // 橋を架けると金貨3枚
+  else grantRiverGold(game, idx, edgeId, 'edge');
   fire(game, 'build');
   recalcLongestRoad(game);
   checkWin(game, idx);
@@ -992,9 +1115,12 @@ export function buildSettlement(game, vertexId) {
   game.board.vertices[vertexId].building = { owner: idx, type: 'settlement' };
   p.settlements.push(vertexId);
   markIslandBonus(game, idx, vertexId);
+  grantRiverGold(game, idx, vertexId, 'vertex');
+  queueCamelBuild(game);
   fire(game, 'build');
   recalcLongestRoad(game); // 相手の道を分断することがある
   checkWin(game, idx);
+  if (game.scenario === 'barbarians') resolveBarbarianLanding(game, idx);
   return true;
 }
 export function buildCity(game, vertexId) {
@@ -1010,8 +1136,10 @@ export function buildCity(game, vertexId) {
   v.building = { owner: idx, type: 'city' };
   p.settlements = p.settlements.filter((id) => id !== vertexId);
   p.cities.push(vertexId);
+  queueCamelBuild(game);
   fire(game, 'build');
   checkWin(game, idx);
+  if (game.scenario === 'barbarians') resolveBarbarianLanding(game, idx);
   return true;
 }
 
@@ -1074,8 +1202,10 @@ export function playRoadBuilding(game, cardIdx, items) {
       if (canPlaceShip(game, id, idx) && game.players[idx].ships.length < MAX_SHIPS) {
         const e = game.board.edges[id]; e.ship = idx; e.shipPlacedTurn = game.turnNumber; game.players[idx].ships.push(id);
       }
-    } else if (canPlaceRoad(game, id, idx) && game.players[idx].roads.length < MAX_ROADS) {
+    } else if (!(game.board.riverEdgeIds && game.board.riverEdgeIds.has(id)) // 川: 発展カード「街道建設」で橋は作れない（公式どおり）
+      && canPlaceRoad(game, id, idx) && game.players[idx].roads.length < MAX_ROADS) {
       game.board.edges[id].road = idx; game.players[idx].roads.push(id);
+      grantRiverGold(game, idx, id, 'edge');
     }
   });
   fire(game, 'build');
@@ -1166,85 +1296,410 @@ export function playerTrade(game, otherIdx, give, get) {
 }
 
 // ================================================================
-// 交易と略奪
+// 交易と略奪: 漁師
 // ================================================================
+// 山（fishBag）から1枚引く。尽きたら使用済み（fishUsed）を混ぜ直す（公式どおり）。古い靴は山に戻らない。
+function drawFishToken(game) {
+  if (!game.fishBag.length) {
+    if (!game.fishUsed.length) return null;
+    game.fishBag = shuffle(game.fishUsed, Math.random);
+    game.fishUsed = [];
+  }
+  return game.fishBag.pop();
+}
+function grantFishToken(game, idx) {
+  const token = drawFishToken(game);
+  if (token == null) return;
+  if (token === 'boot') {
+    if (game.oldBootHolder == null) { game.oldBootHolder = idx; log(game, `プレイヤー${idx + 1}が古い靴を引いた`); }
+    checkWinAll(game);
+    return;
+  }
+  const p = game.players[idx];
+  if (p.fishTokens.length >= FISH_HAND_LIMIT) {
+    // 7匹の上限: 一番少ない手持ちより多ければ入れ替える（公式どおり。それ以外はそのまま山へ戻す）
+    let worst = 0;
+    p.fishTokens.forEach((v, i) => { if (v < p.fishTokens[worst]) worst = i; });
+    if (token > p.fishTokens[worst]) { game.fishUsed.push(p.fishTokens[worst]); p.fishTokens[worst] = token; } else game.fishUsed.push(token);
+    return;
+  }
+  p.fishTokens.push(token);
+}
+// 持っている魚トークンから、合計がcost以上になる組を無駄が一番少なくなるように選ぶ（総当たり。最大7枚なので軽い）
+function selectFishTokens(tokens, cost) {
+  const n = tokens.length;
+  let best = null;
+  for (let mask = 1; mask < (1 << n); mask++) {
+    let sum = 0; const idxs = [];
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) { sum += tokens[i]; idxs.push(i); }
+    if (sum >= cost && (!best || sum < best.sum)) best = { sum, idxs };
+  }
+  return best ? best.idxs : null;
+}
+function spendFish(game, idx, cost) {
+  const p = game.players[idx];
+  const idxs = selectFishTokens(p.fishTokens, cost);
+  if (!idxs) return false;
+  idxs.slice().sort((a, b) => b - a).forEach((i) => { game.fishUsed.push(p.fishTokens[i]); p.fishTokens.splice(i, 1); });
+  return true;
+}
 export function canUseFishTrade(game, playerIdx, kind) {
   if (game.scenario !== 'fishermen' || !canBuildNow(game)) return false;
   const cost = FISH_TRADE_COST[kind];
-  return cost != null && (game.players[playerIdx].fish || 0) >= cost;
+  return cost != null && selectFishTokens(game.players[playerIdx].fishTokens, cost) != null;
 }
 export function fishRobberAway(game) { // 魚2匹: 盗賊を盤外へ（次に誰かが動かすまで、どのマスも塞がない）
   const idx = currentPlayer(game);
-  if (!canUseFishTrade(game, idx, 'robberAway')) return false;
-  game.players[idx].fish -= FISH_TRADE_COST.robberAway;
+  if (!canUseFishTrade(game, idx, 'robberAway') || !spendFish(game, idx, FISH_TRADE_COST.robberAway)) return false;
   game.board.robberHex = null;
-  fire(game, 'build'); recalcOldBoot(game);
+  fire(game, 'build');
   return true;
 }
-export function fishSteal(game, targetIdx) { // 魚3匹: 誰かから資源1枚
+export function fishSteal(game, targetIdx) { // 魚3匹: 誰かから資源1枚（ランダム）
   const idx = currentPlayer(game);
-  if (idx === targetIdx || !canUseFishTrade(game, idx, 'steal')) return false;
-  game.players[idx].fish -= FISH_TRADE_COST.steal;
+  if (idx === targetIdx || !canUseFishTrade(game, idx, 'steal') || !spendFish(game, idx, FISH_TRADE_COST.steal)) return false;
   stealFrom(game, targetIdx, idx);
-  fire(game, 'rob'); recalcOldBoot(game);
+  fire(game, 'rob');
   return true;
 }
-export function fishResource(game, res) { // 魚4匹: 銀行から資源1枚
+export function fishResource(game, res) { // 魚4匹: 銀行から好きな資源1枚
   const idx = currentPlayer(game);
   if (!canUseFishTrade(game, idx, 'resource') || !RESOURCES.includes(res) || game.bank.resources[res] <= 0) return false;
-  game.players[idx].fish -= FISH_TRADE_COST.resource;
+  if (!spendFish(game, idx, FISH_TRADE_COST.resource)) return false;
   game.bank.resources[res]--; game.players[idx].resources[res]++;
-  fire(game, 'build'); recalcOldBoot(game);
+  fire(game, 'build');
   return true;
 }
-export function fishRoad(game, edgeId) { // 魚5匹: 道を1本只で
+export function fishRoad(game, edgeId) { // 魚5匹: 道を1本只で（置ける場所は自分で選ぶ）
   const idx = currentPlayer(game);
   const p = game.players[idx];
   if (!canUseFishTrade(game, idx, 'road') || p.roads.length >= MAX_ROADS || !canPlaceRoad(game, edgeId, idx)) return false;
-  p.fish -= FISH_TRADE_COST.road;
+  if (!spendFish(game, idx, FISH_TRADE_COST.road)) return false;
   game.board.edges[edgeId].road = idx;
   p.roads.push(edgeId);
-  fire(game, 'build'); recalcOldBoot(game); recalcLongestRoad(game); checkWin(game, idx);
+  fire(game, 'build'); recalcLongestRoad(game); checkWin(game, idx);
   return true;
 }
 export function fishDevCard(game) { // 魚7匹: 発展カードを1枚只で
   const idx = currentPlayer(game);
   const p = game.players[idx];
   if (!canUseFishTrade(game, idx, 'devcard') || !game.bank.devDeck.length) return false;
-  p.fish -= FISH_TRADE_COST.devcard;
+  if (!spendFish(game, idx, FISH_TRADE_COST.devcard)) return false;
   const type = game.bank.devDeck.pop();
   p.devCards.push({ type, boughtTurn: game.turnNumber, played: false });
-  fire(game, 'buy-dev'); recalcOldBoot(game); checkWin(game, idx);
+  fire(game, 'buy-dev'); checkWin(game, idx);
   return true;
 }
-export function tradeGold(game, res) { // 川: 金貨2枚で資源1枚
+// 古い靴は、サイコロを振った後の自分の手番に、自分と同じか自分より点が多い人へ渡せる。
+// 自分だけが最多点のときは手放せない（公式どおり）。
+export function canGiveOldBoot(game, targetIdx) {
+  const idx = currentPlayer(game);
+  if (game.scenario !== 'fishermen' || game.oldBootHolder !== idx || targetIdx === idx || game.phase !== 'main') return false;
+  const scores = game.players.map((_, i) => playerScore(game, i));
+  const max = Math.max(...scores);
+  const aloneMax = scores[idx] === max && scores.filter((s) => s === max).length === 1;
+  if (aloneMax) return false;
+  return scores[targetIdx] >= scores[idx];
+}
+export function giveOldBoot(game, targetIdx) {
+  if (!canGiveOldBoot(game, targetIdx)) return false;
+  game.oldBootHolder = targetIdx;
+  fire(game, 'build'); checkWinAll(game);
+  return true;
+}
+
+// ================================================================
+// 交易と略奪: 川
+// ================================================================
+// 川沿いに道・開拓地を建てるたびに金貨1枚（都市への建て替えでは増えない。橋は建てると3枚）
+function grantRiverGold(game, idx, vertexOrEdge, kind) {
+  if (game.scenario !== 'rivers') return;
+  const board = game.board;
+  let touches;
+  if (kind === 'vertex') touches = board.riverVertexIds.has(vertexOrEdge);
+  else {
+    const e = board.edges[vertexOrEdge];
+    touches = board.riverEdgeIds.has(vertexOrEdge) || board.riverVertexIds.has(e.v1) || board.riverVertexIds.has(e.v2);
+  }
+  if (!touches) return;
+  game.players[idx].gold = (game.players[idx].gold || 0) + 1;
+  recalcGoldRoles(game);
+}
+export function canTradeGold(game, playerIdx) { return game.scenario === 'rivers' && (game.players[playerIdx].goldSpendsThisTurn || 0) < GOLD_SPENDS_PER_TURN; }
+export function tradeGold(game, res) { // 川: 金貨2枚で資源1枚。手番に2回まで
   const idx = currentPlayer(game);
   const p = game.players[idx];
-  if (game.scenario !== 'rivers' || !canBuildNow(game) || (p.gold || 0) < 2 || !RESOURCES.includes(res) || game.bank.resources[res] <= 0) return false;
+  if (!canBuildNow(game) || !canTradeGold(game, idx) || (p.gold || 0) < 2 || !RESOURCES.includes(res) || game.bank.resources[res] <= 0) return false;
   p.gold -= 2; game.bank.resources[res]--; p.resources[res]++;
+  p.goldSpendsThisTurn = (p.goldSpendsThisTurn || 0) + 1;
+  fire(game, 'trade'); recalcGoldRoles(game);
+  return true;
+}
+// 川: 銀行との海上交易で、資源を金貨に替える（2:1の港があっても金貨には使えない。公式どおり）
+export function goldBankRate(game, playerIdx) {
+  const ports = new Set([...game.players[playerIdx].settlements, ...game.players[playerIdx].cities].map((v) => game.board.vertices[v].port));
+  return ports.has('3:1') ? 3 : 4;
+}
+export function tradeResourceForGold(game, giveRes) {
+  const idx = currentPlayer(game);
+  const p = game.players[idx];
+  if (game.scenario !== 'rivers' || !canBuildNow(game)) return false;
+  const rate = goldBankRate(game, idx);
+  if ((p.resources[giveRes] || 0) < rate) return false;
+  p.resources[giveRes] -= rate; game.bank.resources[giveRes] += rate;
+  p.gold = (p.gold || 0) + 1;
+  fire(game, 'trade'); recalcGoldRoles(game);
+  return true;
+}
+
+// ================================================================
+// 交易と略奪: 隊商
+// ================================================================
+function allCamelEdges(board) { return board.caravans.flat(); }
+function caravanVertexBonus(game, idx) {
+  const camelEdges = new Set(allCamelEdges(game.board));
+  if (!camelEdges.size) return 0;
+  const p = game.players[idx];
+  let bonus = 0;
+  [...p.settlements, ...p.cities].forEach((vid) => {
+    const touching = game.board.vertices[vid].edgeIds.filter((eId) => camelEdges.has(eId)).length;
+    if (touching >= 2) bonus += 1;
+  });
+  return bonus;
+}
+// 開拓地を建てる・都市に建て替えるたびに「手番の終わりにラクダを1つ置く」権利が積まれる（公式どおり）
+function queueCamelBuild(game) { if (game.scenario === 'caravans') game.players[currentPlayer(game)].pendingCamelBuilds++; }
+// ラクダを置ける辺（各キャラバンの先頭の「前」に伸ばす辺。空いている出発点があれば、そこから新しいキャラバンも始められる）
+export function camelPlacementOptions(game) {
+  const board = game.board;
+  const options = new Set();
+  board.camelStartEdges.forEach((eId, i) => { if (!board.caravans[i].length && board.edges[eId].road == null && board.edges[eId].ship == null) options.add(eId); });
+  board.caravans.forEach((chain) => {
+    if (!chain.length) return;
+    const lastId = chain[chain.length - 1];
+    const last = board.edges[lastId];
+    const prevId = chain.length > 1 ? chain[chain.length - 2] : null;
+    const frontVertex = prevId != null ? ([last.v1, last.v2].find((v) => v !== board.edges[prevId].v1 && v !== board.edges[prevId].v2) ?? last.v2) : last.v2;
+    game.board.vertices[frontVertex].edgeIds.forEach((eId) => {
+      if (eId === lastId) return;
+      if (allCamelEdges(board).includes(eId)) return; // 他のラクダと重ねない
+      options.add(eId);
+    });
+  });
+  return [...options];
+}
+function startCamelVote(game) {
+  const order = Array.from({ length: game.playerCount }, (_, i) => (game.turn + i) % game.playerCount);
+  game.pendingCamelVote = { order, idx: 0, bids: {} };
+  game.phase = 'camelVote';
+}
+export function submitCamelBid(game, playerIdx, give = {}) {
+  const pv = game.pendingCamelVote;
+  if (!pv || pv.order[pv.idx] !== playerIdx) return false;
+  const p = game.players[playerIdx];
+  const wheat = give.wheat || 0, sheep = give.sheep || 0;
+  if ((p.resources.wheat || 0) < wheat || (p.resources.sheep || 0) < sheep) return false;
+  p.resources.wheat -= wheat; p.resources.sheep -= sheep;
+  game.bank.resources.wheat += wheat; game.bank.resources.sheep += sheep;
+  pv.bids[playerIdx] = wheat + sheep;
+  pv.idx++;
+  if (pv.idx >= pv.order.length) {
+    // 一番多く出した人が決める。同点・0票なら、直前に手番を終えた人が決める（簡略化。本来は合議もできる。README に注記）
+    let decider = pv.order[0], max = -1, tie = false;
+    pv.order.forEach((pid) => { const v = pv.bids[pid] || 0; if (v > max) { max = v; decider = pid; tie = false; } else if (v === max) tie = true; });
+    if (tie || max <= 0) decider = pv.order[0];
+    game.pendingCamelVote = null;
+    game.phase = 'camelPlace';
+    game.camelDecider = decider;
+  }
   fire(game, 'trade');
   return true;
 }
-// 隊商: 羊か麦を1枚払って、ラクダの列を隣の2辺へ回す（公式の「皆で投票」は、手番の人が代表して決める形に簡略化。README に注記）
-export function canMoveCamels(game, playerIdx) {
-  if (game.scenario !== 'caravans' || !canBuildNow(game)) return false;
-  const p = game.players[playerIdx];
-  return (p.resources.wheat || 0) > 0 || (p.resources.sheep || 0) > 0;
-}
-export function moveCamels(game, dir) {
+export function placeCamel(game, edgeId) {
+  if (game.phase !== 'camelPlace' || !camelPlacementOptions(game).includes(edgeId)) return false;
+  const board = game.board;
+  let placed = false;
+  board.camelStartEdges.forEach((startEId, i) => { if (!placed && !board.caravans[i].length && startEId === edgeId) { board.caravans[i].push(edgeId); placed = true; } });
+  if (!placed) {
+    const chain = board.caravans.find((c) => {
+      if (!c.length) return false;
+      const lastId = c[c.length - 1];
+      const last = board.edges[lastId];
+      const prevId = c.length > 1 ? c[c.length - 2] : null;
+      const frontVertex = prevId != null ? ([last.v1, last.v2].find((v) => v !== board.edges[prevId].v1 && v !== board.edges[prevId].v2) ?? last.v2) : last.v2;
+      return board.vertices[frontVertex].edgeIds.includes(edgeId);
+    });
+    if (chain) { chain.push(edgeId); placed = true; }
+  }
+  game.camelDecider = null;
+  game.phase = 'main';
   const idx = currentPlayer(game);
-  if (!canMoveCamels(game, idx)) return false;
   const p = game.players[idx];
-  const pay = (p.resources.wheat || 0) > 0 ? 'wheat' : 'sheep';
-  p.resources[pay]--; game.bank.resources[pay]++;
-  const desert = game.board.hexes[game.board.camelHexId];
-  const ids = desert.edgeIds;
-  const next = (ids.indexOf(game.board.camelEdgeA) + (dir < 0 ? -1 : 1) + 6) % 6;
-  game.board.camelEdgeA = ids[next];
-  game.board.camelEdgeB = ids[(next + 1) % 6];
-  recalcCamelVertex(game.board);
-  fire(game, 'build'); checkWinAll(game); // 挟まれる頂点が変わると自分以外の得点も動くので、全員ぶん確かめる
+  if (p.pendingCamelBuilds > 0) p.pendingCamelBuilds--;
+  fire(game, 'build'); recalcLongestRoad(game); checkWinAll(game);
+  resumeCamelOrTurn(game);
   return true;
+}
+// 手番の終わりに、建てた分だけラクダの投票→配置を済ませてから、やっと次の手番に進む
+function resumeCamelOrTurn(game) {
+  const idx = game.turn;
+  const p = game.players[idx];
+  if (p.pendingCamelBuilds > 0 && camelPlacementOptions(game).length) { startCamelVote(game); return; }
+  p.pendingCamelBuilds = 0; // 置ける場所がもうなければあきらめる
+  finishAdvanceTurn(game);
+}
+
+// ================================================================
+// 交易と略奪: 蛮族の襲撃
+// 専用盤（砂漠+砦+沿岸の輪）・新しい発展カード60枚・捕虜の取り合いなどは作らず、
+// 基本の19マスに砦を足し、騎士は発展カードでなく直接建てる簡略版にしている（README に注記）。
+// ================================================================
+export const WAR_KNIGHT_COST = { sheep: 1, ore: 1 };
+export const WAR_KNIGHT_MOVE_STEPS = 3; // 麦1枚払うと5歩まで（払うかどうかは moveWarKnight の extend 引数で決める）
+const WAR_KNIGHT_MOVE_STEPS_EXTENDED = 5;
+
+export function canBuildWarKnight(game, playerIdx, edgeId) {
+  if (game.scenario !== 'barbarians' || !canBuildNow(game)) return false;
+  const p = game.players[playerIdx];
+  if (!canAfford(p.resources, WAR_KNIGHT_COST)) return false;
+  const castle = game.board.hexes[game.board.castleHexId];
+  if (!castle.edgeIds.includes(edgeId)) return false;
+  return !game.players.some((pl) => (pl.warKnights || []).some((k) => k.edgeId === edgeId));
+}
+export function availableWarKnightEdges(game, playerIdx) {
+  return game.board.hexes[game.board.castleHexId].edgeIds.filter((eId) => canBuildWarKnight(game, playerIdx, eId));
+}
+export function buildWarKnight(game, edgeId) {
+  const idx = currentPlayer(game);
+  const p = game.players[idx];
+  if (!canBuildWarKnight(game, idx, edgeId)) return false;
+  payCost(p.resources, WAR_KNIGHT_COST);
+  RESOURCES.forEach((r) => { game.bank.resources[r] += WAR_KNIGHT_COST[r] || 0; });
+  p.warKnights.push({ id: (p.warKnights.length ? Math.max(...p.warKnights.map((k) => k.id)) + 1 : 1), edgeId, movedTurn: null });
+  fire(game, 'build');
+  return true;
+}
+function edgeAdjacency(board) {
+  const adj = new Map();
+  board.edges.forEach((e) => { [e.v1, e.v2].forEach((v) => { if (!adj.has(v)) adj.set(v, []); adj.get(v).push(e.id); }); });
+  return (eId) => {
+    const e = board.edges[eId];
+    const out = new Set();
+    [e.v1, e.v2].forEach((v) => (adj.get(v) || []).forEach((o) => { if (o !== eId) out.add(o); }));
+    return [...out];
+  };
+}
+// 騎士は道・建物・他の騎士を無視して移動できる（公式どおり）。終点だけ、他の騎士がいない辺でなければならない。
+export function movableWarKnightEdges(game, playerIdx, knightId, paidGrain) {
+  const p = game.players[playerIdx];
+  const k = (p.warKnights || []).find((x) => x.id === knightId);
+  if (!k || game.scenario !== 'barbarians' || !canBuildNow(game) || k.movedTurn === game.turnNumber) return []; // 1手番に1回だけ（公式どおり）
+  const neighborsOf = edgeAdjacency(game.board);
+  const maxSteps = paidGrain ? WAR_KNIGHT_MOVE_STEPS_EXTENDED : WAR_KNIGHT_MOVE_STEPS;
+  const occupied = new Set(game.players.flatMap((pl) => (pl.warKnights || []).map((x) => x.edgeId)));
+  const seen = new Set([k.edgeId]);
+  let frontier = [k.edgeId];
+  const reach = [];
+  for (let step = 0; step < maxSteps; step++) {
+    const next = [];
+    frontier.forEach((eId) => neighborsOf(eId).forEach((n) => {
+      if (seen.has(n)) return;
+      seen.add(n); next.push(n);
+      if (!occupied.has(n)) reach.push(n);
+    }));
+    frontier = next;
+  }
+  return reach;
+}
+export function moveWarKnight(game, knightId, toEdgeId, paidGrain) {
+  const idx = currentPlayer(game);
+  const p = game.players[idx];
+  if (paidGrain) { if ((p.resources.wheat || 0) < 1) return false; }
+  if (!movableWarKnightEdges(game, idx, knightId, paidGrain).includes(toEdgeId)) return false;
+  if (paidGrain) { p.resources.wheat--; game.bank.resources.wheat++; }
+  const k = p.warKnights.find((x) => x.id === knightId);
+  k.edgeId = toEdgeId;
+  k.movedTurn = game.turnNumber;
+  fire(game, 'build');
+  return true;
+}
+// 開拓地・都市を建てるたびに「蛮族の上陸」。7でない出目を3回まで引き、重複しない出目で沿岸マスに蛮族を置く（公式どおり）
+function resolveBarbarianLanding(game, playerIdx) {
+  if (game.board.barbarianSupply <= 0) return; // 供給が尽きたら、もう上陸しない（公式どおり）
+  const targets = barbarianTargetHexes(game.board);
+  const used = new Set();
+  for (let i = 0; i < 3 && game.board.barbarianSupply > 0; i++) {
+    let roll;
+    let guard = 0;
+    do { roll = 1 + Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6); guard++; } while ((roll === 7 || used.has(roll)) && guard < 200);
+    used.add(roll);
+    const hex = targets.find((h) => h.number === roll && !h.conquered);
+    if (!hex) continue; // 出目に合うマスがない・もう征服済みなら、その回は置かない（公式どおり）
+    if (hex.barbarians >= 3) continue;
+    hex.barbarians++;
+    game.board.barbarianSupply--;
+    if (hex.barbarians >= 3) conquerHex(game, hex);
+  }
+  log(game, `プレイヤー${playerIdx + 1}が建てたので、蛮族が上陸した`);
+}
+function conquerHex(game, hex) {
+  hex.conquered = true;
+  hex.vertexIds.forEach((vid) => {
+    const v = game.board.vertices[vid];
+    if (!v.building) return;
+    // 隣に征服されていないマス（砦・砂漠も含む）がなければ、建物も征服される（公式どおり）
+    const hasFreeHex = v.hexIds.some((h) => !game.board.hexes[h].conquered);
+    if (!hasFreeHex) v.building.conquered = true;
+  });
+  log(game, '蛮族が沿岸のマスを征服した');
+}
+// 手番の終わり: 砦の6辺に接するマスごとに、騎士の数 > 蛮族の数なら勝利（蛮族を取り除き、捕虜を配る）
+function resolveBarbarianExpel(game, actingIdx) {
+  const board = game.board;
+  const castle = board.hexes[board.castleHexId];
+  barbarianTargetHexes(board).forEach((hex) => {
+    if (hex.barbarians <= 0) return;
+    const pathIds = hex.edgeIds;
+    const involved = {}; // playerIdx -> 騎士の数
+    game.players.forEach((p, pi) => (p.warKnights || []).forEach((k) => { if (pathIds.includes(k.edgeId)) involved[pi] = (involved[pi] || 0) + 1; }));
+    const knightTotal = Object.values(involved).reduce((a, b) => a + b, 0);
+    if (knightTotal <= hex.barbarians) return; // 勝てない
+    const prisoners = hex.barbarians;
+    hex.barbarians = 0;
+    if (hex.conquered) {
+      hex.conquered = false;
+      hex.vertexIds.forEach((vid) => { const v = board.vertices[vid]; if (v.building) v.building.conquered = false; });
+      log(game, '蛮族を退け、征服されたマスが元どおりになった');
+    } else {
+      log(game, '蛮族を退けた');
+    }
+    distributePrisoners(game, involved, prisoners);
+    // 勝った騎士のうち1体は、公式の「向き合わせ」の代わりに無作為に1体を外へ戻す（簡略化。README に注記）
+    const involvedIdxs = Object.keys(involved).map(Number);
+    if (involvedIdxs.length) {
+      const loserIdx = involvedIdxs[Math.floor(Math.random() * involvedIdxs.length)];
+      const lp = game.players[loserIdx];
+      const onHex = lp.warKnights.filter((k) => pathIds.includes(k.edgeId));
+      if (onHex.length) {
+        const removed = onHex[Math.floor(Math.random() * onHex.length)];
+        lp.warKnights = lp.warKnights.filter((k) => k.id !== removed.id);
+        lp.gold = (lp.gold || 0) + 3;
+      }
+    }
+  });
+}
+function distributePrisoners(game, involved, count) {
+  const idxs = Object.keys(involved).map(Number);
+  if (!idxs.length) return;
+  if (idxs.length === 1) { game.players[idxs[0]].prisoners += count; checkWin(game, idxs[0]); return; }
+  for (let i = 0; i < count; i++) {
+    // involved の知っている騎士数が多い人を優先し、同数ならランダムに1人へ（公式のサイコロ勝負の簡略化。README に注記）
+    const maxKnights = Math.max(...idxs.map((pi) => involved[pi]));
+    const candidates = idxs.filter((pi) => involved[pi] === maxKnights);
+    const winner = candidates[Math.floor(Math.random() * candidates.length)];
+    game.players[winner].prisoners++;
+  }
+  idxs.forEach((pi) => checkWin(game, pi));
 }
 
 // ================================================================
@@ -1650,23 +2105,27 @@ function startSpecialBuilding(game) {
   const finished = game.turn;
   const queue = [];
   for (let i = 1; i < game.playerCount; i++) queue.push((finished + i) % game.playerCount);
-  if (!queue.length) { advanceTurn(game); return; }
+  if (!queue.length) { finishAdvanceTurn(game); return; }
   game.specialBuildQueue = queue;
   game.specialBuildIdx = 0;
   game.phase = 'specialBuilding';
 }
-function advanceTurn(game) {
+function finishAdvanceTurn(game) {
   game.turn = advanceIdx(game, game.turn);
   game.turnNumber++;
   game.phase = 'roll';
   game.diceLast = null;
   game.shipMovedThisTurn = false;
+  game.players.forEach((p) => { p.goldSpendsThisTurn = 0; });
 }
 export function endTurn(game) {
   if (game.phase !== 'main') return false;
   game.devCardPlayedThisTurn = false;
-  if (game.expansions && game.expansions.includes('5-6player')) startSpecialBuilding(game);
-  else advanceTurn(game);
+  if (game.scenario === 'barbarians') resolveBarbarianExpel(game, game.turn);
+  if (game.expansions && game.expansions.includes('5-6player')) { startSpecialBuilding(game); return true; }
+  // 隊商: 手番の間に建てた分だけ、ラクダの投票→配置を済ませてから次の手番に進む
+  if (game.scenario === 'caravans' && game.players[game.turn].pendingCamelBuilds > 0) { resumeCamelOrTurn(game); return true; }
+  finishAdvanceTurn(game);
   return true;
 }
 export function passSpecialBuild(game) {

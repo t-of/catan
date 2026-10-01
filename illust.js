@@ -118,6 +118,8 @@ export const TERRAIN_STYLE = {
   desert: { edge: '#b39c62', grad: 'desert' },
   water: { edge: '#0e5265', grad: 'water' },
   gold: { edge: '#c79a2c', grad: 'gold' },
+  lake: { edge: '#0e5265', grad: 'water' }, // 漁師: 砂漠の代わりの湖（水のグラデーションを流用）
+  castle: { edge: '#596070', grad: 'mountain' }, // 蛮族の襲撃: 砦（山のグラデーションを流用）
 };
 
 // タイルの上に乗る地形ごとの絵（中心 x,y。R=66 の六角形を前提にした配置）

@@ -121,6 +121,8 @@ button { font: inherit; color: inherit; }
 /* 拡張の選択肢が増えて1行に収まらないので、ここだけ2行に折り返す */
 #expansionPicker { flex-wrap: wrap; }
 #expansionPicker .btn { flex: 1 1 40%; }
+#scenarioPicker { flex-wrap: wrap; }
+#scenarioPicker .btn { flex: 1 1 40%; }
 
 /* ---- 席ごとの人／CPU選び ---- */
 .seats { display: flex; flex-direction: column; gap: 6px; }

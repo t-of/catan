@@ -137,7 +137,7 @@ function buildIcon(key, color) {
   else if (key === 'city') I.city(shapes, 14, 17, color, dark, light);
   else if (key === 'ship' || key === 'moveShip') I.ship(shapes, 14, 18, key === 'moveShip' ? -20 : 0, color);
   else if (key === 'dev') { I.add(shapes, I.rect(6, 3, 16, 22), '#f6eedb', 1, '#1b1612', 1.5); I.add(shapes, I.rect(9, 6, 10, 10), '#7a5bb8', 0.85); }
-  else if (key === 'knight') I.robber(shapes, 14, 18, 1);
+  else if (key === 'knight' || key === 'warKnight') I.robber(shapes, 14, 18, 1);
   else if (key === 'wall') { I.add(shapes, I.rect(3, 15, 22, 7), color, 1, '#1b1612', 1.5); I.add(shapes, I.rect(5, 10, 6, 6), color, 1, '#1b1612', 1.2); I.add(shapes, I.rect(13, 10, 6, 6), color, 1, '#1b1612', 1.2); }
   else if (key === 'improve') { I.add(shapes, I.poly([[14, 2], [25, 9], [25, 19], [14, 26], [3, 19], [3, 9]]), I.tint(color, 0.1), 1, '#1b1612', 1.5); }
   shapes.forEach((s) => svg.appendChild(pathEl(s)));
@@ -280,9 +280,27 @@ function migrateGame(g) {
   // 古い保存（交易と略奪より前）には scenario などがないので、「なし」として引き継ぐ
   g.scenario = g.scenario || null;
   g.richPlayer = g.richPlayer ?? null;
-  g.poorPlayer = g.poorPlayer ?? null;
   g.oldBootHolder = g.oldBootHolder ?? null;
-  g.players.forEach((p) => { if (p.fish == null) p.fish = null; if (p.gold == null) p.gold = null; });
+  // 古い保存の poorPlayer（1人だけ）・fish（数）は、今の形（poorPlayers配列・fishTokens配列）に合わせ直す
+  if (g.poorPlayer !== undefined) { g.poorPlayers = g.poorPlayer == null ? [] : [g.poorPlayer]; delete g.poorPlayer; }
+  g.poorPlayers = g.poorPlayers || [];
+  g.players.forEach((p) => {
+    if (typeof p.fish === 'number') { p.fishTokens = []; delete p.fish; }
+    if (p.fishTokens === undefined) p.fishTokens = g.scenario === 'fishermen' ? [] : null;
+    if (p.gold == null) p.gold = (g.scenario === 'rivers' || g.scenario === 'barbarians') ? 0 : null;
+    if (p.goldSpendsThisTurn == null) p.goldSpendsThisTurn = 0;
+    if (p.bridges == null) p.bridges = 0;
+    if (p.warKnights === undefined) p.warKnights = g.scenario === 'barbarians' ? [] : null;
+    if (p.prisoners == null) p.prisoners = 0;
+    if (p.pendingCamelBuilds == null) p.pendingCamelBuilds = 0;
+  });
+  if (g.scenario === 'fishermen') { g.fishBag = g.fishBag || []; g.fishUsed = g.fishUsed || []; }
+  if (g.scenario === 'caravans' && g.board.camelEdgeA !== undefined) {
+    // 古い（投票より前の）隊商の保存は、盤の形が変わっているので続きからは諦めて空のキャラバンとして引き継ぐ
+    g.board.caravans = g.board.caravans || [[], [], []];
+    g.board.oasisHexId = g.board.oasisHexId ?? g.board.camelHexId ?? 0;
+    g.board.camelStartEdges = g.board.camelStartEdges || g.board.hexes[g.board.oasisHexId].edgeIds.filter((_, i) => i % 2 === 0);
+  }
   return g;
 }
 els.continueBtn.addEventListener('click', () => {
@@ -394,7 +412,7 @@ function nextCpuJob() {
     const p = game.pendingScienceBonus.find((x) => isCpuSeat(x));
     return p != null ? { kind: 'scienceBonus', player: p } : null;
   }
-  return isCpuSeat(E.currentPlayer(game)) ? { kind: 'step' } : null;
+  return isCpuSeat(E.actingPlayer(game)) ? { kind: 'step' } : null;
 }
 function scheduleCpu() {
   if (cpuTimer || !game) return;
@@ -405,7 +423,7 @@ function scheduleCpu() {
     if (job.kind === 'discard') CPU.discardFor(game, job.player, seatLevel(job.player));
     else if (job.kind === 'goldPick') CPU.pickGoldFor(game, job.player);
     else if (job.kind === 'scienceBonus') CPU.pickScienceBonusFor(game, job.player);
-    else CPU.step(game, seatLevel(E.currentPlayer(game)));
+    else CPU.step(game, seatLevel(E.actingPlayer(game)));
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
     save('game', game);
@@ -521,19 +539,26 @@ function renderBoardInto(svg, g, uiState) {
     if (!isAny) labels.push({ x: px, y: py + 8, t: RES_LABEL[type], f: bg, s: 10, w: 700 });
   });
 
-  // 交易と略奪: 漁場（外周の辺に出目と魚の数の札）
+  // 交易と略奪: 漁場（外周の3つの頂点のまん中あたりに出目の札）。湖の出目は盤の中の湖タイルに4つ出す
   if (g.board.fisheries) {
     g.board.fisheries.forEach((fsh) => {
-      const e = g.board.edges[fsh.edgeId];
-      const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
-      const mx = (v1.x + v2.x) / 2 * SCALE, my = (v1.y + v2.y) / 2 * SCALE;
-      const [hx, hy] = hexCenterPx(g, g.board.hexes[e.hexIds[0]]);
+      const vs = fsh.vertices.map((vid) => g.board.vertices[vid]);
+      const mx = vs.reduce((a, v) => a + v.x, 0) / vs.length * SCALE;
+      const my = vs.reduce((a, v) => a + v.y, 0) / vs.length * SCALE;
+      const [hx, hy] = hexCenterPx(g, g.board.hexes[0]);
       const nx = mx - hx, ny = my - hy, len = Math.hypot(nx, ny) || 1;
-      const px = mx + (nx / len) * (SCALE * Math.sqrt(3) / 2), py = my + (ny / len) * (SCALE * Math.sqrt(3) / 2);
+      const px = mx + (nx / len) * (SCALE * 0.55), py = my + (ny / len) * (SCALE * 0.55);
       I.add(S, I.ell(px, py + 2, 15, 15), '#000', 0.25);
       I.add(S, I.ell(px, py, 15, 15), '#dff3f4', 1, '#2a8aa0', 2.5);
-      labels.push({ x: px, y: py - 3, t: String(fsh.number), f: '#114f62', s: 13, w: 700 });
-      for (let d = 0; d < fsh.value; d++) I.add(S, I.ell(px - (fsh.value - 1) * 4 + d * 8, py + 9, 2, 2), '#2a8aa0');
+      labels.push({ x: px, y: py, t: String(fsh.number), f: '#114f62', s: 13, w: 700 });
+    });
+  }
+  const lakeHex = g.board.hexes.find((h) => h.terrain === 'lake');
+  if (lakeHex) {
+    const [cx, cy] = hexCenterPx(g, lakeHex);
+    [[-20, -18], [20, -18], [-20, 18], [20, 18]].forEach(([dx, dy], i) => {
+      I.add(S, I.ell(cx + dx, cy + dy, 13, 13), '#dff3f4', 1, '#2a8aa0', 2);
+      labels.push({ x: cx + dx, y: cy + dy, t: String(lakeHex.lakeNumbers[i]), f: '#114f62', s: 11, w: 700 });
     });
   }
   // 交易と略奪: 川（真ん中の列を横切る水色の帯。橋を架けないと道を通せない）
@@ -546,28 +571,53 @@ function renderBoardInto(svg, g, uiState) {
       I.add(S, I.line(x1, y1, x2, y2), 'none', 0.6, '#bfe6ee', 4);
     });
   }
-  // 交易と略奪: 隊商のラクダ（砂漠の隣の2辺を黄土色で示し、挟まれた頂点に印）
-  if (g.board.camelEdgeA != null) {
-    [g.board.camelEdgeA, g.board.camelEdgeB].forEach((eId) => {
-      const e = g.board.edges[eId];
-      const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
-      I.add(S, I.line(v1.x * SCALE, v1.y * SCALE, v2.x * SCALE, v2.y * SCALE), 'none', 0.9, '#caa34a', 9);
+  // 交易と略奪: 隊商のラクダ（オアシスから伸びる3本のキャラバンを黄土色の帯で表す）
+  if (g.board.caravans) {
+    g.board.caravans.forEach((chain) => {
+      chain.forEach((eId) => {
+        const e = g.board.edges[eId];
+        const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+        I.add(S, I.line(v1.x * SCALE, v1.y * SCALE, v2.x * SCALE, v2.y * SCALE), 'none', 0.9, '#caa34a', 9);
+      });
     });
-    if (g.board.camelVertexId != null) {
-      const v = g.board.vertices[g.board.camelVertexId];
-      const x = v.x * SCALE, y = v.y * SCALE;
-      I.add(S, I.ell(x + 2, y + 7, 13, 4), '#000', 0.25);
-      I.add(S, I.ell(x, y, 11, 11), '#e8c878', 1, '#8a6a1e', 2);
-      labels.push({ x, y: y + 1, t: '🐫', f: '#5a3a14', s: 13, w: 700 });
-    }
+  }
+  // 交易と略奪: 蛮族の襲撃の騎士（辺の上に小さな駒として置く）
+  if (g.board.castleHexId != null) {
+    g.players.forEach((pl) => {
+      (pl.warKnights || []).forEach((k) => {
+        const e = g.board.edges[k.edgeId];
+        const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+        const x = (v1.x + v2.x) / 2 * SCALE, y = (v1.y + v2.y) / 2 * SCALE;
+        I.add(S, I.ell(x, y, 9, 9), pl.color, 1, '#1b1612', 1.6);
+      });
+    });
+  }
+  // 交易と略奪: 蛮族の襲撃（砦・沿岸マスの蛮族の数。征服されたマスは暗く表示）
+  if (g.board.castleHexId != null) {
+    g.board.hexes.forEach((hex) => {
+      if (hex.id === g.board.castleHexId) return;
+      if (hex.conquered) {
+        const pts = hexPointsPx(g, hex);
+        I.add(S, I.poly(pts), '#1a1410', 0.45);
+      }
+      if (hex.barbarians > 0) {
+        const [cx, cy] = hexCenterPx(g, hex);
+        I.add(S, I.ell(cx, cy - 26, 11, 11), '#2b1d10', 1, '#120c06', 1.2);
+        labels.push({ x: cx, y: cy - 26, t: String(hex.barbarians), f: '#f0cf85', s: 12, w: 700 });
+      }
+    });
   }
 
   // 道・船（既存＋置ける/動かせる場所）
   const buildableEdges = uiState && (uiState.mode === 'setupRoad' || uiState.mode === 'buildRoad' || uiState.mode === 'buildShip' || uiState.mode === 'devRoad1' || uiState.mode === 'devRoad2'
-    || uiState.mode === 'progressEdge1' || uiState.mode === 'progressEdge2')
+    || uiState.mode === 'progressEdge1' || uiState.mode === 'progressEdge2' || uiState.mode === 'buildWarKnight' || uiState.mode === 'fishRoadPick')
     ? new Set(edgeChoices()) : new Set();
   const pickableShips = uiState && uiState.mode === 'moveShip1' ? new Set(E.movableShipEdges(g, idx)) : new Set();
   const shipTargets = uiState && uiState.mode === 'moveShip2' ? new Set(E.availableShipEdges(g, idx)) : new Set();
+  const pickableKnights = uiState && uiState.mode === 'moveWarKnight1'
+    ? new Set(g.players[idx].warKnights.filter((k) => E.movableWarKnightEdges(g, idx, k.id, false).length).map((k) => k.edgeId)) : new Set();
+  const knightTargets = uiState && uiState.mode === 'moveWarKnight2'
+    ? new Set(E.movableWarKnightEdges(g, idx, uiState.data.knightId, false)) : new Set();
   g.board.edges.forEach((edge) => {
     const v1 = g.board.vertices[edge.v1], v2 = g.board.vertices[edge.v2];
     const x1 = v1.x * SCALE, y1 = v1.y * SCALE, x2 = v2.x * SCALE, y2 = v2.y * SCALE;
@@ -585,11 +635,12 @@ function renderBoardInto(svg, g, uiState) {
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, '#1b1612', 10);
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, color, 6);
       I.add(S, I.line(tx1, ty1 - 1, tx2, ty2 - 1), 'none', 0.35, '#ffffff', 1.5);
-    } else if (buildableEdges.has(edge.id) || shipTargets.has(edge.id)) {
+    } else if (buildableEdges.has(edge.id) || shipTargets.has(edge.id) || knightTargets.has(edge.id)) {
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, '#1b1612', 9);
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 0.85, 'var(--accent)', 5);
       queue('line', { x1, y1, x2, y2, class: 'road-hit', 'data-edge': edge.id });
     } else {
+      if (pickableKnights.has(edge.id)) queue('line', { x1, y1, x2, y2, class: 'road-hit', 'data-edge': edge.id });
       queue('line', { x1, y1, x2, y2, stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 2.5 });
     }
   });
@@ -651,6 +702,14 @@ function renderBoardInto(svg, g, uiState) {
     if (pirateBlink) I.add(pirateShapes, I.ell(cx, cy + 4, 26, 18), 'none', 1, '#ffd84a', 4);
   }
 
+  // 隊商: ラクダを置ける場所（投票で決まった人の番のときだけ。手番の人でなく camelDecider が決める）
+  if (g.phase === 'camelPlace' && !isCpuSeat(g.camelDecider)) {
+    E.camelPlacementOptions(g).forEach((eId) => {
+      const e = g.board.edges[eId];
+      const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+      queue('line', { x1: v1.x * SCALE, y1: v1.y * SCALE, x2: v2.x * SCALE, y2: v2.y * SCALE, class: 'road-hit', 'data-edge': eId });
+    });
+  }
   // 盗賊・海賊を置ける場所（タイル自体をタップできるようにする）
   if (uiState && (uiState.mode === 'moveRobber' || uiState.mode === 'devKnightHex')) {
     g.board.hexes.forEach((hex) => {
@@ -923,7 +982,7 @@ function costRow(cost) {
 }
 function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (res[k] || 0) >= v); }
 
-const BUILD_MODE = { road: 'buildRoad', settlement: 'buildSettlement', city: 'buildCity', ship: 'buildShip', knight: 'buildKnight' };
+const BUILD_MODE = { road: 'buildRoad', settlement: 'buildSettlement', city: 'buildCity', ship: 'buildShip', knight: 'buildKnight', warKnight: 'buildWarKnight' };
 function renderBuildGrid() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
@@ -946,6 +1005,9 @@ function renderBuildGrid() {
     );
   } else {
     defs.push({ key: 'dev', label: '発展カード', cost: E.COSTS.dev, ok: inMain && game.bank.devDeck.length > 0 && canAfford(p.resources, E.COSTS.dev) });
+  }
+  if (game.scenario === 'barbarians') {
+    defs.push({ key: 'warKnight', label: '騎士', cost: E.WAR_KNIGHT_COST, ok: inMain && canAfford(p.resources, E.WAR_KNIGHT_COST) && E.availableWarKnightEdges(game, idx).length });
   }
   els.buildGrid.innerHTML = '';
   defs.forEach((d) => {
@@ -989,6 +1051,25 @@ function renderBuildGrid() {
     });
     els.buildGrid.appendChild(btn);
   }
+  // 騎士を動かす（蛮族の襲撃・手番に1回ずつ）
+  if (game.scenario === 'barbarians') {
+    const movable = p.warKnights.filter((k) => E.movableWarKnightEdges(game, idx, k.id, false).length);
+    const btn = document.createElement('button');
+    const active = ui.mode === 'moveWarKnight1' || ui.mode === 'moveWarKnight2';
+    btn.className = `build-btn${active ? ' is-selected' : ''}`;
+    btn.disabled = !(inMain && movable.length);
+    btn.appendChild(buildIcon('warKnight', p.color));
+    const label = document.createElement('span');
+    label.className = 'build-btn__label';
+    label.textContent = '騎士を動かす';
+    btn.appendChild(label);
+    btn.addEventListener('click', () => {
+      if (active) { ui = { mode: 'idle', data: {} }; renderAll(); return; }
+      ui = { mode: 'moveWarKnight1', data: {} };
+      renderAll();
+    });
+    els.buildGrid.appendChild(btn);
+  }
 }
 
 // ================================================================
@@ -1016,6 +1097,16 @@ function renderPanel() {
     if (p != null) { openPanel(); renderScienceBonusPanel(p); }
     else closePanel();
     return;
+  }
+  if (game.phase === 'camelVote' && game.pendingCamelVote) {
+    const acting = game.pendingCamelVote.order[game.pendingCamelVote.idx];
+    if (isCpuSeat(acting)) { closePanel(); return; }
+    openPanel(); renderCamelVotePanel(acting); return;
+  }
+  if (game.phase === 'barbarianSteal') {
+    const idx = E.currentPlayer(game);
+    if (isCpuSeat(idx)) { closePanel(); return; }
+    openPanel(); renderBarbarianStealPanel(idx); return;
   }
   if (ui.data.pendingHex != null) { openPanel(); renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev); return; }
   if (ui.data.pendingEdge != null) { openPanel(); renderDevRoadKindPanel(ui.data.pendingEdge); return; }
@@ -1124,6 +1215,46 @@ function renderScienceBonusPanel(playerIdx) {
   });
 }
 
+// 隊商: 羊・麦を出してラクダの投票に参加する
+function renderCamelVotePanel(playerIdx) {
+  const p = game.players[playerIdx];
+  const bid = ui.data.camelBid || (ui.data.camelBid = { wheat: 0, sheep: 0 });
+  els.panel.innerHTML = `<h2>プレイヤー${playerIdx + 1}の投票（ラクダの置き場所）</h2>
+    <p style="opacity:.8">羊・麦を出すほど、その人の意見が通りやすくなります。出さなくても参加できます。</p>
+    <div class="sheet__row"><span>麦</span><div class="stepper">
+      <button class="ghost-btn" data-act="wdec">−</button><b>${bid.wheat}</b><button class="ghost-btn" data-act="winc" ${bid.wheat < p.resources.wheat ? '' : 'disabled'}>＋</button>
+    </div></div>
+    <div class="sheet__row"><span>羊</span><div class="stepper">
+      <button class="ghost-btn" data-act="sdec">−</button><b>${bid.sheep}</b><button class="ghost-btn" data-act="sinc" ${bid.sheep < p.resources.sheep ? '' : 'disabled'}>＋</button>
+    </div></div>
+    <button class="btn btn--accent" data-act="bid">この内容で投票する</button>`;
+  bindPanel({
+    winc: () => { bid.wheat++; renderPanel(); },
+    wdec: () => { if (bid.wheat > 0) { bid.wheat--; renderPanel(); } },
+    sinc: () => { bid.sheep++; renderPanel(); },
+    sdec: () => { if (bid.sheep > 0) { bid.sheep--; renderPanel(); } },
+    bid: () => {
+      E.submitCamelBid(game, playerIdx, bid);
+      ui.data.camelBid = null;
+      playEvents(); persistAndRender(); renderPanel();
+    },
+  });
+}
+// 蛮族の襲撃: 7が出たら、盗賊の代わりに相手を選んで1枚奪う
+function renderBarbarianStealPanel(idx) {
+  const targets = E.barbarianStealTargets(game, idx);
+  els.panel.innerHTML = `<h2>誰から奪う？</h2>`
+    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">プレイヤー${t + 1}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
+      : `<button class="card-btn" data-act="pick" data-target="">誰も奪えない</button>`);
+  bindPanel({
+    pick: (b) => {
+      const target = b.dataset.target === '' ? null : Number(b.dataset.target);
+      E.resolveBarbarianSteal(game, target);
+      playEvents(); persistAndRender();
+    },
+  });
+}
+
 function renderRobberTargetPanel(hexId, forDev) {
   const idx = E.currentPlayer(game);
   const targets = E.banditTargets(game, hexId, idx);
@@ -1154,30 +1285,29 @@ function renderTradeMenu() {
   const fishOther = ui.data.fishOther == null ? (idx + 1) % game.playerCount : ui.data.fishOther;
   const fishRes = ui.data.fishRes || (ui.data.fishRes = E.RESOURCES[0]);
   const goldRes = ui.data.goldRes || (ui.data.goldRes = E.RESOURCES[0]);
+  const gold2Res = ui.data.gold2Res || (ui.data.gold2Res = E.RESOURCES[0]);
   let scenarioHtml = '';
   if (game.scenario === 'fishermen') {
+    const fishTotal = (p.fishTokens || []).reduce((a, b) => a + b, 0);
+    const canGive = game.oldBootHolder === idx && game.players.some((_, i) => i !== idx && E.canGiveOldBoot(game, i));
     scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
-      <h2>漁師（魚 ${p.fish || 0}匹${game.oldBootHolder === idx ? '・古い靴あり（勝利点+1点多く要る）' : ''}）</h2>
+      <h2>漁師（魚 ${(p.fishTokens || []).join('・') || 'なし'}＝合計${fishTotal}匹${game.oldBootHolder === idx ? '・古い靴あり（勝利点+1点多く要る）' : ''}）</h2>
       <div class="sheet__row"><button class="ghost-btn" data-act="fishRobber" ${E.canUseFishTrade(game, idx, 'robberAway') ? '' : 'disabled'}>魚2匹: 盗賊を盤外へ</button></div>
       <div class="sheet__row"><span>相手</span><div class="res-pick" data-row="fishOther"></div>
         <button class="ghost-btn" data-act="fishSteal" ${E.canUseFishTrade(game, idx, 'steal') ? '' : 'disabled'}>魚3匹: 資源を奪う</button></div>
       <div class="sheet__row"><span>資源</span><div class="res-pick" data-row="fishRes"></div>
         <button class="ghost-btn" data-act="fishResource" ${E.canUseFishTrade(game, idx, 'resource') ? '' : 'disabled'}>魚4匹: 資源1枚</button></div>
-      <div class="sheet__row"><button class="ghost-btn" data-act="fishRoadStart" ${E.canUseFishTrade(game, idx, 'road') && E.availableRoadEdges(game, idx).length ? '' : 'disabled'}>魚5匹: 道を1本(自動で置ける場所に)</button></div>
-      <div class="sheet__row"><button class="ghost-btn" data-act="fishDev" ${E.canUseFishTrade(game, idx, 'devcard') && game.bank.devDeck.length ? '' : 'disabled'}>魚7匹: 発展カード1枚</button></div>`;
+      <div class="sheet__row"><button class="ghost-btn" data-act="fishRoadStart" ${E.canUseFishTrade(game, idx, 'road') && E.availableRoadEdges(game, idx).length ? '' : 'disabled'}>魚5匹: 道を1本（置く場所を選ぶ）</button></div>
+      <div class="sheet__row"><button class="ghost-btn" data-act="fishDev" ${E.canUseFishTrade(game, idx, 'devcard') && game.bank.devDeck.length ? '' : 'disabled'}>魚7匹: 発展カード1枚</button></div>
+      ${canGive ? `<div class="sheet__row"><span>古い靴を渡す相手</span><div class="res-pick" data-row="bootOther"></div>
+        <button class="ghost-btn" data-act="giveBoot">渡す</button></div>` : ''}`;
   } else if (game.scenario === 'rivers') {
     scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
-      <h2>川（金貨 ${p.gold || 0}枚${game.richPlayer === idx ? '・富豪+1点' : ''}${game.poorPlayer === idx ? '・貧者-2点' : ''}）</h2>
+      <h2>川（金貨 ${p.gold || 0}枚${game.richPlayer === idx ? '・富豪+1点' : ''}${(game.poorPlayers || []).includes(idx) ? '・貧者-2点' : ''}・橋${p.bridges || 0}/3）</h2>
       <div class="sheet__row"><span>資源</span><div class="res-pick" data-row="goldRes"></div>
-        <button class="ghost-btn" data-act="goldTrade" ${(p.gold || 0) >= 2 ? '' : 'disabled'}>金貨2枚: 資源1枚</button></div>`;
-  } else if (game.scenario === 'caravans') {
-    scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
-      <h2>隊商</h2>
-      <p style="opacity:.8">羊か麦を1枚払うと、ラクダの列を隣へ動かせます。挟まれた頂点の開拓地・都市は+1点です。</p>
-      <div class="sheet__row">
-        <button class="ghost-btn" data-act="camelLeft" ${E.canMoveCamels(game, idx) ? '' : 'disabled'}>← ラクダを動かす</button>
-        <button class="ghost-btn" data-act="camelRight" ${E.canMoveCamels(game, idx) ? '' : 'disabled'}>ラクダを動かす →</button>
-      </div>`;
+        <button class="ghost-btn" data-act="goldTrade" ${E.canTradeGold(game, idx) && (p.gold || 0) >= 2 ? '' : 'disabled'}>金貨2枚: 資源1枚（手番に${p.goldSpendsThisTurn || 0}/2回使用）</button></div>
+      <div class="sheet__row"><span>資源</span><div class="res-pick" data-row="gold2Res"></div>
+        <button class="ghost-btn" data-act="resForGold">資源→金貨1枚（港なしは4枚、3:1港は3枚）</button></div>`;
   }
 
   els.panel.innerHTML = `<h2>銀行・港と交易</h2>
@@ -1203,8 +1333,13 @@ function renderTradeMenu() {
   if (game.scenario === 'fishermen') {
     fillOtherPick(els.panel.querySelector('[data-row="fishOther"]'), fishOther, 'fishOther');
     fillResPick(els.panel.querySelector('[data-row="fishRes"]'), E.RESOURCES, (r) => r === fishRes, (r, b) => b.appendChild(resIcon(r)), 'fishRes');
+    if (els.panel.querySelector('[data-row="bootOther"]')) {
+      const bootOther = ui.data.bootOther == null ? (idx + 1) % game.playerCount : ui.data.bootOther;
+      fillOtherPick(els.panel.querySelector('[data-row="bootOther"]'), bootOther, 'bootOther');
+    }
   } else if (game.scenario === 'rivers') {
     fillResPick(els.panel.querySelector('[data-row="goldRes"]'), E.RESOURCES, (r) => r === goldRes, (r, b) => b.appendChild(resIcon(r)), 'goldRes');
+    fillResPick(els.panel.querySelector('[data-row="gold2Res"]'), E.RESOURCES, (r) => r === gold2Res, (r, b) => b.appendChild(resIcon(r)), 'gold2Res');
   }
 
   bindPanel({
@@ -1232,16 +1367,18 @@ function renderTradeMenu() {
       playEvents(); persistAndRender(); renderPanel();
     },
     fishOther: (b) => { ui.data.fishOther = Number(b.dataset.p); renderPanel(); },
+    bootOther: (b) => { ui.data.bootOther = Number(b.dataset.p); renderPanel(); },
     fishRes: (b) => { ui.data.fishRes = b.dataset.res; renderPanel(); },
     goldRes: (b) => { ui.data.goldRes = b.dataset.res; renderPanel(); },
+    gold2Res: (b) => { ui.data.gold2Res = b.dataset.res; renderPanel(); },
     fishRobber: () => { E.fishRobberAway(game); playEvents(); persistAndRender(); renderPanel(); },
     fishSteal: () => { E.fishSteal(game, fishOther); playEvents(); persistAndRender(); renderPanel(); },
     fishResource: () => { E.fishResource(game, fishRes); playEvents(); persistAndRender(); renderPanel(); },
-    fishRoadStart: () => { const e = E.availableRoadEdges(game, idx)[0]; if (e != null) E.fishRoad(game, e); playEvents(); persistAndRender(); renderPanel(); },
+    fishRoadStart: () => { ui = { mode: 'fishRoadPick', data: {} }; renderAll(); },
     fishDev: () => { E.fishDevCard(game); playEvents(); persistAndRender(); renderPanel(); },
+    giveBoot: () => { E.giveOldBoot(game, ui.data.bootOther == null ? (idx + 1) % game.playerCount : ui.data.bootOther); playEvents(); persistAndRender(); renderPanel(); },
     goldTrade: () => { E.tradeGold(game, goldRes); playEvents(); persistAndRender(); renderPanel(); },
-    camelLeft: () => { E.moveCamels(game, -1); playEvents(); persistAndRender(); renderPanel(); },
-    camelRight: () => { E.moveCamels(game, 1); playEvents(); persistAndRender(); renderPanel(); },
+    resForGold: () => { E.tradeResourceForGold(game, gold2Res); playEvents(); persistAndRender(); renderPanel(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1581,6 +1718,7 @@ function humansTurn() {
   if (game.phase === 'discard') return game.pendingDiscards.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'goldPick') return game.pendingGoldPicks.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'scienceBonus') return game.pendingScienceBonus.some((p) => !isCpuSeat(p));
+  if (game.phase === 'camelPlace') return !isCpuSeat(game.camelDecider);
   return !isCpuSeat(E.currentPlayer(game));
 }
 function renderActionBar() {
@@ -1668,6 +1806,7 @@ function onVertexTap(vid) {
   }
 }
 function onEdgeTap(eid) {
+  if (game.phase === 'camelPlace') { if (E.placeCamel(game, eid)) { playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'setupRoad') { E.setupPlaceRoad(game, eid); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
   if (ui.mode === 'buildRoad') { if (E.buildRoad(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'buildShip') { if (E.buildShip(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
@@ -1677,6 +1816,15 @@ function onEdgeTap(eid) {
     return;
   }
   if (ui.mode === 'moveShip2') { if (E.moveShip(game, ui.data.from, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildWarKnight') { if (E.buildWarKnight(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'fishRoadPick') { if (E.fishRoad(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'moveWarKnight1') {
+    const idx = E.currentPlayer(game);
+    const k = game.players[idx].warKnights.find((x) => x.edgeId === eid && E.movableWarKnightEdges(game, idx, x.id, false).length);
+    if (k) { ui = { mode: 'moveWarKnight2', data: { knightId: k.id } }; renderAll(); }
+    return;
+  }
+  if (ui.mode === 'moveWarKnight2') { if (E.moveWarKnight(game, ui.data.knightId, eid, false)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'devRoad1' || ui.mode === 'devRoad2') { onDevRoadEdgeTap(eid); return; }
   if (ui.mode === 'progressEdge1') {
     if (!E.canPlaceRoad(game, eid, E.currentPlayer(game))) return;
