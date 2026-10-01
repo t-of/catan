@@ -783,3 +783,59 @@ test('交易と略奪・漁師: CPUだけで4人、数局きちんと決着す�
     assert.ok(E.playerScore(g, g.winner) >= target);
   }
 });
+
+test('交易と略奪・川: 川をまたぐ辺には道でなく橋(土2木1)が要る', () => {
+  const g = tbGame('rivers');
+  assert.ok(g.board.riverEdgeIds.size >= 5);
+  g.phase = 'main'; g.turn = 0;
+  const edgeId = [...g.board.riverEdgeIds][0];
+  const e = g.board.edges[edgeId];
+  g.board.vertices[e.v1].building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(e.v1);
+  g.players[0].resources = { wood: 1, brick: 1, sheep: 0, wheat: 0, ore: 0 };
+  assert.equal(E.buildRoad(g, edgeId), false); // ふつうの道のコストだけでは足りない
+  g.players[0].resources = { wood: 1, brick: 2, sheep: 0, wheat: 0, ore: 0 };
+  assert.ok(E.buildRoad(g, edgeId));
+});
+
+test('交易と略奪・川: 川沿いの建物は金貨を産み、2枚で資源1枚に替えられる。富豪が得点に付く', () => {
+  const g = tbGame('rivers');
+  assert.equal(g.winTarget, 12);
+  g.phase = 'main'; g.turn = 0;
+  const v = [...g.board.riverVertexIds][0];
+  g.board.vertices[v].building = { owner: 0, type: 'city' };
+  g.players[0].cities.push(v);
+  const hexId = g.board.vertices[v].hexIds.find((h) => g.board.hexes[h].number != null);
+  const num = g.board.hexes[hexId].number;
+  g.phase = 'roll';
+  E.rollDice(g, diceSeq(num));
+  assert.equal(g.players[0].gold, 2); // 都市は2枚
+  assert.equal(g.richPlayer, 0);
+  assert.equal(g.poorPlayer, null); // 残り3人が同点(0枚)なので貧者は決まらない
+  g.phase = 'main';
+  g.players[0].gold = 1;
+  assert.equal(E.tradeGold(g, 'sheep'), false); // 1枚では足りない
+  g.players[0].gold = 2;
+  const sheepBefore = g.players[0].resources.sheep;
+  assert.ok(E.tradeGold(g, 'sheep'));
+  assert.equal(g.players[0].resources.sheep, sheepBefore + 1);
+});
+
+test('交易と略奪・川: 富豪(+1点)・貧者(-2点)が得点に反映される', () => {
+  const g = tbGame('rivers');
+  const before0 = E.playerScore(g, 0);
+  const before1 = E.playerScore(g, 1);
+  g.richPlayer = 0; g.poorPlayer = 1;
+  assert.equal(E.playerScore(g, 0), before0 + 1);
+  assert.equal(E.playerScore(g, 1), before1 - 2);
+});
+
+test('交易と略奪・川: CPUだけで4人、数局きちんと決着する(勝利点12点)', () => {
+  for (let i = 0; i < 3; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'rivers' });
+    assert.equal(g.scenario, 'rivers');
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
+  }
+});
+
