@@ -839,3 +839,35 @@ test('交易と略奪・川: CPUだけで4人、数局きちんと決着する(�
   }
 });
 
+test('交易と略奪・隊商: ラクダは砂漠の隣り合う2辺にいて、挟まれた頂点が1つ決まる', () => {
+  const g = tbGame('caravans');
+  assert.equal(g.winTarget, 12);
+  assert.notEqual(g.board.camelEdgeA, g.board.camelEdgeB);
+  assert.ok(g.board.camelVertexId != null);
+  const a = g.board.edges[g.board.camelEdgeA], b = g.board.edges[g.board.camelEdgeB];
+  assert.ok([a.v1, a.v2].includes(g.board.camelVertexId));
+  assert.ok([b.v1, b.v2].includes(g.board.camelVertexId));
+});
+
+test('交易と略奪・隊商: 羊か麦を払うとラクダが動き、挟まれた頂点の建物に+1点が付く', () => {
+  const g = tbGame('caravans');
+  g.phase = 'main'; g.turn = 0;
+  g.players[0].resources.wheat = 1;
+  assert.equal(E.canMoveCamels(g, 0), true);
+  const before = g.board.camelVertexId;
+  assert.ok(E.moveCamels(g, 1));
+  assert.equal(g.players[0].resources.wheat, 0);
+  assert.notEqual(g.board.camelVertexId, before);
+  g.board.vertices[g.board.camelVertexId].building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(g.board.camelVertexId);
+  assert.equal(E.playerScore(g, 0), 2); // 開拓地1点 + ラクダに挟まれて+1点
+});
+
+test('交易と略奪・隊商: CPUだけで4人、数局きちんと決着する(勝利点12点)', () => {
+  for (let i = 0; i < 3; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'caravans' });
+    assert.equal(g.scenario, 'caravans');
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
+  }
+});
