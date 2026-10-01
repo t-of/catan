@@ -943,3 +943,91 @@ test('交易と略奪・隊商: CPUだけで4人、数局きちんと決着す�
     assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
   }
 });
+
+// ---- 蛮族の襲撃 ----
+test('交易と略奪・蛮族の襲撃: 砦は盤の中心で産出せず、出目2と12のマスに蛮族が1体ずついる。勝利点12点', () => {
+  const g = tbGame('barbarians');
+  assert.equal(g.winTarget, 12);
+  const castle = g.board.hexes[g.board.castleHexId];
+  assert.equal(castle.q, 0); assert.equal(castle.r, 0);
+  assert.equal(castle.terrain, 'castle');
+  const two = g.board.hexes.find((h) => h.number === 2);
+  const twelve = g.board.hexes.find((h) => h.number === 12);
+  assert.equal(two.barbarians, 1);
+  assert.equal(twelve.barbarians, 1);
+  assert.equal(g.board.barbarianSupply, 28);
+  assert.equal(g.board.robberHex, null);
+});
+
+test('交易と略奪・蛮族の襲撃: セットアップの2つ目はいきなり都市になる(資源は1枚のまま)', () => {
+  const g = tbGame('barbarians');
+  g.phase = 'setup2';
+  g.setupOrder = [0, 1, 2, 3];
+  g.setupIndex = 0;
+  g.setupPending = 'settlement';
+  const v = E.availableSettlementVertices(g, 0, true)[0];
+  assert.ok(E.setupPlaceSettlement(g, v));
+  assert.equal(g.players[0].cities.length, 1);
+  assert.equal(g.players[0].settlements.length, 0);
+  assert.equal(g.board.vertices[v].building.type, 'city');
+  const before = JSON.parse(JSON.stringify(g.players[0].resources));
+  E.setupPlaceRoad(g, g.board.vertices[v].edgeIds[0]);
+  // 都市なら資源producing地形の数×2枚になるはずが、ここでは×1枚のまま(公式どおり)
+  const PRODUCING = ['forest', 'hills', 'pasture', 'field', 'mountains'];
+  const resourceHexCount = g.board.vertices[v].hexIds.filter((h) => PRODUCING.includes(g.board.hexes[h].terrain)).length;
+  const totalGained = Object.keys(before).reduce((a, k) => a + (g.players[0].resources[k] - before[k]), 0);
+  assert.equal(totalGained, resourceHexCount);
+});
+
+test('交易と略奪・蛮族の襲撃: 開拓地を建てる・都市にするたびに蛮族が上陸する', () => {
+  const g = tbGame('barbarians');
+  g.phase = 'main'; g.turn = 0;
+  const v = E.availableSettlementVertices(g, 0, true)[0];
+  g.board.vertices[v].building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(v);
+  g.players[0].resources = { wood: 0, brick: 0, sheep: 0, wheat: 2, ore: 3 };
+  const before = g.board.barbarianSupply;
+  assert.ok(E.buildCity(g, v));
+  assert.ok(g.board.barbarianSupply < before);
+});
+
+test('交易と略奪・蛮族の襲撃: 騎士は砦の6辺にだけ建てられ、動いて蛮族より多ければ手番の終わりに退け、捕虜をもらう', () => {
+  const g = tbGame('barbarians');
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0];
+  p0.resources = { wood: 0, brick: 0, sheep: 2, wheat: 0, ore: 2 };
+  let edges = E.availableWarKnightEdges(g, 0);
+  assert.ok(edges.length > 0);
+  assert.ok(E.buildWarKnight(g, edges[0]));
+  edges = E.availableWarKnightEdges(g, 0);
+  assert.ok(E.buildWarKnight(g, edges[0]));
+  assert.equal(p0.warKnights.length, 2);
+  // 蛮族が1体いるマスへ、騎士2体を手で寄せる（1体では同数で勝てないので2体にする。移動の検証は movableWarKnightEdges 側で別に見る）
+  const target = g.board.hexes.find((h) => h.barbarians > 0 && h.id !== g.board.castleHexId);
+  p0.warKnights[0].edgeId = target.edgeIds[0];
+  p0.warKnights[1].edgeId = target.edgeIds[1];
+  const before = p0.prisoners;
+  assert.ok(E.endTurn(g));
+  assert.equal(target.barbarians, 0);
+  assert.ok(p0.prisoners > before);
+});
+
+test('交易と略奪・蛮族の襲撃: 7が出たら盗賊の代わりに相手を選んで1枚奪う', () => {
+  const g = tbGame('barbarians');
+  g.phase = 'main'; g.turn = 0;
+  g.players[1].resources.wood = 1;
+  g.phase = 'roll';
+  E.rollDice(g, diceSeq(7));
+  assert.equal(g.phase, 'barbarianSteal');
+  assert.ok(E.resolveBarbarianSteal(g, 1));
+  assert.equal(g.phase, 'main');
+});
+
+test('交易と略奪・蛮族の襲撃: CPUだけで4人、数局きちんと決着する(勝利点12点)', () => {
+  for (let i = 0; i < 3; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'barbarians' });
+    assert.equal(g.scenario, 'barbarians');
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
+  }
+});
