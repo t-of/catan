@@ -133,6 +133,17 @@ test('銀行交易: 港なしは4:1、港があればその比率', () => {
   assert.equal(E.playerPortRate(g, 0, 'wood'), 2);
 });
 
+test('7が出たとき: 8枚以上の人だけ半分（切り捨て）捨てる', () => {
+  const g = E.createGame(3, Math.random);
+  g.phase = 'roll';
+  g.players[0].resources.wood = 6;
+  g.players[1].resources.wood = 7;
+  g.players[2].resources.wood = 9;
+  const dice = [0.4, 0.6]; // 3 + 4 = 7
+  assert.equal(E.rollDice(g, () => dice.shift()), 7);
+  assert.deepEqual(g.pendingDiscards, [{ player: 2, count: 4 }]);
+});
+
 test('勝利判定: 得点が10に届くと winner が立つ', () => {
   const g = E.createGame(3, Math.random);
   g.phase = 'main'; g.turn = 0;

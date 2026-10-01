@@ -331,8 +331,8 @@ export function rollDice(game, rng = Math.random) {
   log(game, `サイコロ: ${d1} + ${d2} = ${total}`);
   if (total === 7) {
     game.pendingDiscards = game.players
-      .map((p, i) => ({ player: i, count: Math.floor(sumRes(p.resources) / 2) }))
-      .filter((d) => d.count > 0);
+      .filter((p) => sumRes(p.resources) > 7)
+      .map((p) => ({ player: game.players.indexOf(p), count: Math.floor(sumRes(p.resources) / 2) }));
     game.phase = game.pendingDiscards.length ? 'discard' : 'moveRobber';
   } else {
     distributeResources(game, total);
