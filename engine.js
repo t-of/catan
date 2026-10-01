@@ -309,14 +309,17 @@ function distributeResources(game, total) {
       const v = game.board.vertices[vid];
       if (!v.building) return;
       const amt = v.building.type === 'city' ? 2 : 1;
-      contributions.push({ player: v.building.owner, res, amt });
+      contributions.push({ player: v.building.owner, res, amt, hex: hex.id });
       demand[res] += amt;
     });
   });
   RESOURCES.forEach((res) => {
     if (demand[res] === 0) return;
     if (demand[res] > game.bank.resources[res]) { fire(game, 'shortage'); return; } // 銀行不足なら誰ももらえない
-    contributions.filter((c) => c.res === res).forEach((c) => { game.players[c.player].resources[res] += c.amt; });
+    contributions.filter((c) => c.res === res).forEach((c) => {
+      game.players[c.player].resources[res] += c.amt;
+      (game.gains ||= []).push(c); // 演出のきっかけ。main.js が読んで clear する
+    });
     game.bank.resources[res] -= demand[res];
   });
 }

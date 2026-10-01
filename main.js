@@ -154,6 +154,7 @@ function dieEl(value, rotateDeg) {
 }
 
 let game = null;
+let robberMovedAt = 0, lastRobberHex = null; // 盗賊が動いた時刻（動いた直後に点滅させる）
 let rolling = false; // サイコロを振るアニメの途中。この間は目の表示をアニメに任せる
 let playerCount = load('playerCount', 3) === 4 ? 4 : 3;
 let ui = { mode: 'idle', data: {} };
@@ -258,6 +259,40 @@ function playEvents() {
   if (!game) return;
   const evts = game.events.splice(0, game.events.length);
   evts.forEach((e) => { if (SOUND[e]) SOUND[e](); });
+  if (lastRobberHex != null && game.board.robberHex !== lastRobberHex) {
+    robberMovedAt = Date.now();
+    setTimeout(() => { if (game) renderAll(); }, 3100); // 点滅を止める
+  }
+  lastRobberHex = game.board.robberHex;
+  flyGains((game.gains || []).splice(0));
+}
+
+// もらった資源を、マスから手札（手番の人）かプレイヤー欄（ほかの人）へ飛ばす
+function flyGains(gains) {
+  if (!gains.length || document.documentElement.classList.contains('motion-off')) return;
+  const ctm = els.board.getScreenCTM();
+  if (!ctm) return;
+  const cur = E.currentPlayer(game);
+  gains.forEach((gn, k) => {
+    const [hx, hy] = hexCenterPx(game, game.board.hexes[gn.hex]);
+    const from = new DOMPoint(hx, hy).matrixTransform(ctm);
+    const target = gn.player === cur ? els.handBar.children[E.RESOURCES.indexOf(gn.res)] : els.playersBar.children[gn.player];
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    for (let n = 0; n < gn.amt; n++) {
+      const icon = resIcon(gn.res);
+      icon.classList.add('fly-res');
+      icon.style.left = `${from.x - 16}px`; icon.style.top = `${from.y - 16}px`;
+      document.body.appendChild(icon);
+      const dx = r.left + r.width / 2 - from.x, dy = r.top + r.height / 2 - from.y;
+      icon.animate([
+        { transform: 'translate(0, 0) scale(0.4)', opacity: 0 },
+        { transform: 'translate(0, -24px) scale(1.3)', opacity: 1, offset: 0.25 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.8)`, opacity: 0.9 },
+      ], { duration: 900, delay: (k + n) * 120, easing: 'cubic-bezier(.5,0,.4,1)', fill: 'backwards' }).finished
+        .then(() => icon.remove(), () => icon.remove());
+    }
+  });
 }
 
 // ================================================================
@@ -449,10 +484,16 @@ function renderBoardInto(svg, g, uiState) {
     }
   });
 
-  // 盗賊
+  // 盗賊（点滅させるので、ほかの絵とは別の <g> に入れる）
+  const robberShapes = [];
+  let robberBlink = false;
   {
     const [cx, cy] = hexCenterPx(g, g.board.hexes[g.board.robberHex]);
-    I.robber(S, cx + 2, cy + 14, 1.15);
+    I.robber(robberShapes, cx + 2, cy + 14, 1.15);
+    // 7が出て動かすとき・動いた直後は、光る輪を付けて点滅させる
+    robberBlink = svg === els.board && (g.phase === 'moveRobber' || (uiState && uiState.mode === 'devKnightHex')
+      || Date.now() < robberMovedAt + 3000);
+    if (robberBlink) I.add(robberShapes, I.ell(cx + 2, cy + 2, 26, 26), 'none', 1, '#ffd84a', 4);
   }
 
   // 盗賊を置ける場所（タイル自体をタップできるようにする）
@@ -465,6 +506,9 @@ function renderBoardInto(svg, g, uiState) {
   }
 
   S.forEach((s) => svg.appendChild(pathEl(s)));
+  const robberG = el('g', { class: robberBlink ? 'robber-blink' : '' });
+  robberShapes.forEach((s) => robberG.appendChild(pathEl(s)));
+  svg.appendChild(robberG);
   labels.forEach((l) => {
     const n = el('text', {
       x: l.x, y: l.y, fill: l.f, class: 'hex-number',
@@ -597,10 +641,13 @@ function costRow(cost) {
   const wrap = document.createElement('span');
   wrap.className = 'build-btn__cost';
   Object.entries(cost).forEach(([r, n]) => {
-    wrap.appendChild(resIcon(r));
+    const pair = document.createElement('span');
+    pair.className = 'cost-pair';
+    pair.appendChild(resIcon(r));
     const s = document.createElement('span');
     s.textContent = `×${n}`;
-    wrap.appendChild(s);
+    pair.appendChild(s);
+    wrap.appendChild(pair);
   });
   return wrap;
 }
@@ -916,6 +963,7 @@ els.diceBtn.addEventListener('click', () => {
     els.diceBox.innerHTML = '';
     els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
     els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
+    beep(500 + Math.random() * 300, 0.03);
     delay *= 1.25;
     if (delay < 260) setTimeout(spin, delay); else finish();
   };
