@@ -73,6 +73,8 @@ const els = {
   expansionRow: document.getElementById('expansionRow'),
   expansionPicker: document.getElementById('expansionPicker'),
   expansionNote: document.getElementById('expansionNote'),
+  scenarioRow: document.getElementById('scenarioRow'),
+  scenarioPicker: document.getElementById('scenarioPicker'),
   seatsPanel: document.getElementById('seatsPanel'),
   startBtn: document.getElementById('startBtn'),
   continueBtn: document.getElementById('continueBtn'),
@@ -187,7 +189,9 @@ syncCountPicker();
 // ---- 拡張選び（3〜4人だけ選べる。5〜6人は自動で5〜6人拡張） ----
 // 他の拡張（都市と騎士・交易と略奪）も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
 let expansion = load('expansion', 'none');
-if (!['none', 'seafarers', 'cities-knights'].includes(expansion)) expansion = 'none';
+if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians'].includes(expansion)) expansion = 'none';
+let scenario = load('scenario', 'fishermen');
+if (!E.TB_SCENARIOS.includes(scenario)) scenario = 'fishermen';
 els.expansionPicker.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-expansion]');
   if (!btn) return;
@@ -195,12 +199,21 @@ els.expansionPicker.addEventListener('click', (e) => {
   save('expansion', expansion);
   syncExpansionPicker();
 });
+els.scenarioPicker.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-scenario]');
+  if (!btn) return;
+  scenario = btn.dataset.scenario;
+  save('scenario', scenario);
+  syncExpansionPicker();
+});
 function syncExpansionPicker() {
   const choosable = playerCount <= 4;
   els.expansionPicker.hidden = !choosable;
   els.expansionNote.hidden = choosable;
+  els.scenarioRow.hidden = !choosable || expansion !== 'traders-barbarians';
   if (!choosable) return;
   [...els.expansionPicker.children].forEach((b) => b.classList.toggle('is-selected', b.dataset.expansion === expansion));
+  [...els.scenarioPicker.children].forEach((b) => b.classList.toggle('is-selected', b.dataset.scenario === scenario));
 }
 syncExpansionPicker();
 
@@ -250,7 +263,7 @@ renderSeatsPanel();
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
   const expansions = playerCount <= 4 && expansion !== 'none' ? [expansion] : [];
-  game = E.createGame(playerCount, Math.random, { expansions });
+  game = E.createGame(playerCount, Math.random, { expansions, scenario });
   ui = { mode: modeForPhase(), data: {} };
   showGame();
   save('game', game);
@@ -264,6 +277,12 @@ function migrateGame(g) {
   g.pendingScienceBonus = g.pendingScienceBonus || [];
   g.shipMovedThisTurn = !!g.shipMovedThisTurn;
   g.players.forEach((p) => { p.ships = p.ships || []; p.islandBonus = !!p.islandBonus; });
+  // 古い保存（交易と略奪より前）には scenario などがないので、「なし」として引き継ぐ
+  g.scenario = g.scenario || null;
+  g.richPlayer = g.richPlayer ?? null;
+  g.poorPlayer = g.poorPlayer ?? null;
+  g.oldBootHolder = g.oldBootHolder ?? null;
+  g.players.forEach((p) => { if (p.fish == null) p.fish = null; if (p.gold == null) p.gold = null; });
   return g;
 }
 els.continueBtn.addEventListener('click', () => {
@@ -502,6 +521,47 @@ function renderBoardInto(svg, g, uiState) {
     if (!isAny) labels.push({ x: px, y: py + 8, t: RES_LABEL[type], f: bg, s: 10, w: 700 });
   });
 
+  // 交易と略奪: 漁場（外周の辺に出目と魚の数の札）
+  if (g.board.fisheries) {
+    g.board.fisheries.forEach((fsh) => {
+      const e = g.board.edges[fsh.edgeId];
+      const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+      const mx = (v1.x + v2.x) / 2 * SCALE, my = (v1.y + v2.y) / 2 * SCALE;
+      const [hx, hy] = hexCenterPx(g, g.board.hexes[e.hexIds[0]]);
+      const nx = mx - hx, ny = my - hy, len = Math.hypot(nx, ny) || 1;
+      const px = mx + (nx / len) * (SCALE * Math.sqrt(3) / 2), py = my + (ny / len) * (SCALE * Math.sqrt(3) / 2);
+      I.add(S, I.ell(px, py + 2, 15, 15), '#000', 0.25);
+      I.add(S, I.ell(px, py, 15, 15), '#dff3f4', 1, '#2a8aa0', 2.5);
+      labels.push({ x: px, y: py - 3, t: String(fsh.number), f: '#114f62', s: 13, w: 700 });
+      for (let d = 0; d < fsh.value; d++) I.add(S, I.ell(px - (fsh.value - 1) * 4 + d * 8, py + 9, 2, 2), '#2a8aa0');
+    });
+  }
+  // 交易と略奪: 川（真ん中の列を横切る水色の帯。橋を架けないと道を通せない）
+  if (g.board.riverEdgeIds) {
+    g.board.riverEdgeIds.forEach((eId) => {
+      const e = g.board.edges[eId];
+      const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+      const x1 = v1.x * SCALE, y1 = v1.y * SCALE, x2 = v2.x * SCALE, y2 = v2.y * SCALE;
+      I.add(S, I.line(x1, y1, x2, y2), 'none', 0.9, '#1d6e86', 11);
+      I.add(S, I.line(x1, y1, x2, y2), 'none', 0.6, '#bfe6ee', 4);
+    });
+  }
+  // 交易と略奪: 隊商のラクダ（砂漠の隣の2辺を黄土色で示し、挟まれた頂点に印）
+  if (g.board.camelEdgeA != null) {
+    [g.board.camelEdgeA, g.board.camelEdgeB].forEach((eId) => {
+      const e = g.board.edges[eId];
+      const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
+      I.add(S, I.line(v1.x * SCALE, v1.y * SCALE, v2.x * SCALE, v2.y * SCALE), 'none', 0.9, '#caa34a', 9);
+    });
+    if (g.board.camelVertexId != null) {
+      const v = g.board.vertices[g.board.camelVertexId];
+      const x = v.x * SCALE, y = v.y * SCALE;
+      I.add(S, I.ell(x + 2, y + 7, 13, 4), '#000', 0.25);
+      I.add(S, I.ell(x, y, 11, 11), '#e8c878', 1, '#8a6a1e', 2);
+      labels.push({ x, y: y + 1, t: '🐫', f: '#5a3a14', s: 13, w: 700 });
+    }
+  }
+
   // 道・船（既存＋置ける/動かせる場所）
   const buildableEdges = uiState && (uiState.mode === 'setupRoad' || uiState.mode === 'buildRoad' || uiState.mode === 'buildShip' || uiState.mode === 'devRoad1' || uiState.mode === 'devRoad2'
     || uiState.mode === 'progressEdge1' || uiState.mode === 'progressEdge2')
@@ -572,7 +632,8 @@ function renderBoardInto(svg, g, uiState) {
   // 盗賊・海賊（点滅させるので、ほかの絵とは別の <g> に入れる）
   const robberShapes = [];
   let robberBlink = false;
-  {
+  // 漁師: 魚2匹で盗賊を盤外へ出せる間は robberHex が null になり、盗賊は描かない
+  if (g.board.robberHex != null) {
     const [cx, cy] = hexCenterPx(g, g.board.hexes[g.board.robberHex]);
     I.robber(robberShapes, cx + 2, cy + 14, 1.15);
     // 7が出て動かすとき・動いた直後は、光る輪を付けて点滅させる
@@ -1090,6 +1151,34 @@ function renderTradeMenu() {
   const other = ui.data.tradeOther == null ? (idx + 1) % game.playerCount : ui.data.tradeOther;
   const pGive = ui.data.pGive || (ui.data.pGive = E.RESOURCES.reduce((o, r) => ({ ...o, [r]: 0 }), {}));
   const pGet = ui.data.pGet || (ui.data.pGet = E.RESOURCES.reduce((o, r) => ({ ...o, [r]: 0 }), {}));
+  const fishOther = ui.data.fishOther == null ? (idx + 1) % game.playerCount : ui.data.fishOther;
+  const fishRes = ui.data.fishRes || (ui.data.fishRes = E.RESOURCES[0]);
+  const goldRes = ui.data.goldRes || (ui.data.goldRes = E.RESOURCES[0]);
+  let scenarioHtml = '';
+  if (game.scenario === 'fishermen') {
+    scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
+      <h2>漁師（魚 ${p.fish || 0}匹${game.oldBootHolder === idx ? '・古い靴あり（勝利点+1点多く要る）' : ''}）</h2>
+      <div class="sheet__row"><button class="ghost-btn" data-act="fishRobber" ${E.canUseFishTrade(game, idx, 'robberAway') ? '' : 'disabled'}>魚2匹: 盗賊を盤外へ</button></div>
+      <div class="sheet__row"><span>相手</span><div class="res-pick" data-row="fishOther"></div>
+        <button class="ghost-btn" data-act="fishSteal" ${E.canUseFishTrade(game, idx, 'steal') ? '' : 'disabled'}>魚3匹: 資源を奪う</button></div>
+      <div class="sheet__row"><span>資源</span><div class="res-pick" data-row="fishRes"></div>
+        <button class="ghost-btn" data-act="fishResource" ${E.canUseFishTrade(game, idx, 'resource') ? '' : 'disabled'}>魚4匹: 資源1枚</button></div>
+      <div class="sheet__row"><button class="ghost-btn" data-act="fishRoadStart" ${E.canUseFishTrade(game, idx, 'road') && E.availableRoadEdges(game, idx).length ? '' : 'disabled'}>魚5匹: 道を1本(自動で置ける場所に)</button></div>
+      <div class="sheet__row"><button class="ghost-btn" data-act="fishDev" ${E.canUseFishTrade(game, idx, 'devcard') && game.bank.devDeck.length ? '' : 'disabled'}>魚7匹: 発展カード1枚</button></div>`;
+  } else if (game.scenario === 'rivers') {
+    scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
+      <h2>川（金貨 ${p.gold || 0}枚${game.richPlayer === idx ? '・富豪+1点' : ''}${game.poorPlayer === idx ? '・貧者-2点' : ''}）</h2>
+      <div class="sheet__row"><span>資源</span><div class="res-pick" data-row="goldRes"></div>
+        <button class="ghost-btn" data-act="goldTrade" ${(p.gold || 0) >= 2 ? '' : 'disabled'}>金貨2枚: 資源1枚</button></div>`;
+  } else if (game.scenario === 'caravans') {
+    scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
+      <h2>隊商</h2>
+      <p style="opacity:.8">羊か麦を1枚払うと、ラクダの列を隣へ動かせます。挟まれた頂点の開拓地・都市は+1点です。</p>
+      <div class="sheet__row">
+        <button class="ghost-btn" data-act="camelLeft" ${E.canMoveCamels(game, idx) ? '' : 'disabled'}>← ラクダを動かす</button>
+        <button class="ghost-btn" data-act="camelRight" ${E.canMoveCamels(game, idx) ? '' : 'disabled'}>ラクダを動かす →</button>
+      </div>`;
+  }
 
   els.panel.innerHTML = `<h2>銀行・港と交易</h2>
     <div class="sheet__row"><span>出す（${rate}枚で1枚）</span><div class="res-pick" data-row="give"></div></div>
@@ -1101,6 +1190,7 @@ function renderTradeMenu() {
     <div class="sheet__row"><span>渡す</span><div class="res-pick" data-row="pgive"></div></div>
     <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="pget"></div></div>
     <button class="btn btn--accent" data-act="playerTrade">この内容で成立させる</button>
+    ${scenarioHtml}
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
 
   fillResPick(els.panel.querySelector('[data-row="give"]'), E.RESOURCES, (r) => r === give, (r, b) => {
@@ -1110,6 +1200,12 @@ function renderTradeMenu() {
   fillOtherPick(els.panel.querySelector('[data-row="other"]'), other);
   fillStepperRow(els.panel.querySelector('[data-row="pgive"]'), pGive, (r) => p.resources[r], 'pg');
   fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => game.players[other].resources[r], 'pw');
+  if (game.scenario === 'fishermen') {
+    fillOtherPick(els.panel.querySelector('[data-row="fishOther"]'), fishOther, 'fishOther');
+    fillResPick(els.panel.querySelector('[data-row="fishRes"]'), E.RESOURCES, (r) => r === fishRes, (r, b) => b.appendChild(resIcon(r)), 'fishRes');
+  } else if (game.scenario === 'rivers') {
+    fillResPick(els.panel.querySelector('[data-row="goldRes"]'), E.RESOURCES, (r) => r === goldRes, (r, b) => b.appendChild(resIcon(r)), 'goldRes');
+  }
 
   bindPanel({
     give: (b) => { ui.data.tradeGive = b.dataset.res; renderPanel(); },
@@ -1135,6 +1231,17 @@ function renderTradeMenu() {
       ui.data.pGive = null; ui.data.pGet = null;
       playEvents(); persistAndRender(); renderPanel();
     },
+    fishOther: (b) => { ui.data.fishOther = Number(b.dataset.p); renderPanel(); },
+    fishRes: (b) => { ui.data.fishRes = b.dataset.res; renderPanel(); },
+    goldRes: (b) => { ui.data.goldRes = b.dataset.res; renderPanel(); },
+    fishRobber: () => { E.fishRobberAway(game); playEvents(); persistAndRender(); renderPanel(); },
+    fishSteal: () => { E.fishSteal(game, fishOther); playEvents(); persistAndRender(); renderPanel(); },
+    fishResource: () => { E.fishResource(game, fishRes); playEvents(); persistAndRender(); renderPanel(); },
+    fishRoadStart: () => { const e = E.availableRoadEdges(game, idx)[0]; if (e != null) E.fishRoad(game, e); playEvents(); persistAndRender(); renderPanel(); },
+    fishDev: () => { E.fishDevCard(game); playEvents(); persistAndRender(); renderPanel(); },
+    goldTrade: () => { E.tradeGold(game, goldRes); playEvents(); persistAndRender(); renderPanel(); },
+    camelLeft: () => { E.moveCamels(game, -1); playEvents(); persistAndRender(); renderPanel(); },
+    camelRight: () => { E.moveCamels(game, 1); playEvents(); persistAndRender(); renderPanel(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1147,12 +1254,12 @@ function fillResPick(container, list, isSelected, build, act) {
     container.appendChild(b);
   });
 }
-function fillOtherPick(container, other) {
+function fillOtherPick(container, other, act) {
   const idx = E.currentPlayer(game);
   game.players.forEach((_, i) => {
     if (i === idx) return;
     const b = document.createElement('button');
-    b.dataset.act = 'other'; b.dataset.p = i;
+    b.dataset.act = act || 'other'; b.dataset.p = i;
     if (i === other) b.classList.add('is-selected');
     b.textContent = `プレイヤー${i + 1}` + (isCpuSeat(i) ? '（CPU）' : '');
     container.appendChild(b);

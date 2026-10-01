@@ -118,6 +118,9 @@ button { font: inherit; color: inherit; }
 .setup__note { position: relative; z-index: 1; margin: -4px 0 0; font-size: 12px; color: var(--muted); }
 .segmented { display: flex; gap: 6px; flex: 1; }
 .segmented .btn { flex: 1; }
+/* 拡張の選択肢が増えて1行に収まらないので、ここだけ2行に折り返す */
+#expansionPicker { flex-wrap: wrap; }
+#expansionPicker .btn { flex: 1 1 40%; }
 
 /* ---- 席ごとの人／CPU選び ---- */
 .seats { display: flex; flex-direction: column; gap: 6px; }

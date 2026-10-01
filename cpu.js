@@ -218,7 +218,9 @@ function anyBankTrades(game, idx) {
 function weakMainStep(game, idx) {
   const p = game.players[idx];
   const opts = [];
-  if (p.roads.length < 15 && affordable(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length) opts.push('road');
+  // 川の橋は道より高いので、置ける辺の中に実際に払えるものがあるかで判断する(でないと無限ループになる)
+  const affordableRoads = E.availableRoadEdges(game, idx).filter((e) => affordable(p.resources, E.roadCostFor(game, e)));
+  if (p.roads.length < 15 && affordableRoads.length) opts.push('road');
   if (p.ships.length < 15 && affordable(p.resources, E.COSTS.ship) && E.availableShipEdges(game, idx).length) opts.push('ship');
   if (p.settlements.length < 5 && affordable(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length) opts.push('settlement');
   if (p.cities.length < 4 && affordable(p.resources, E.COSTS.city) && E.availableCityVertices(game, idx).length) opts.push('city');
@@ -229,7 +231,7 @@ function weakMainStep(game, idx) {
   if (trades.length) opts.push('trade');
   opts.push('end');
   const choice = pick(opts);
-  if (choice === 'road') return E.buildRoad(game, pick(E.availableRoadEdges(game, idx)));
+  if (choice === 'road') return E.buildRoad(game, pick(affordableRoads));
   if (choice === 'ship') return E.buildShip(game, pick(E.availableShipEdges(game, idx)));
   if (choice === 'settlement') return E.buildSettlement(game, pick(E.availableSettlementVertices(game, idx, false)));
   if (choice === 'city') return E.buildCity(game, pick(E.availableCityVertices(game, idx)));
@@ -254,11 +256,12 @@ function greedyBuild(game, idx, level) {
   }
   // 道・船は、先にまだ誰も建てていない頂点があるときだけ（行き場のない方角には延ばさない）。
   // 船は海に面した辺にしか置けないので availableShipEdges が自動で絞ってくれる（航海者版でなければ常に空）。
-  const edges = E.availableRoadEdges(game, idx);
+  // 川の橋は道より高いので、置ける辺のうち実際に払える辺だけを候補にする（でないと無限ループになる）
+  const edges = E.availableRoadEdges(game, idx).filter((e) => affordable(p.resources, E.roadCostFor(game, e)));
   const ships = E.availableShipEdges(game, idx);
   const roadBest = edges.length ? edges.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s)[0] : null;
   const shipBest = ships.length ? ships.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s)[0] : null;
-  if (roadBest && roadBest.s > 0 && p.roads.length < 15 && affordable(p.resources, E.COSTS.road) && (!shipBest || roadBest.s >= shipBest.s)) {
+  if (roadBest && roadBest.s > 0 && p.roads.length < 15 && (!shipBest || roadBest.s >= shipBest.s)) {
     return E.buildRoad(game, roadBest.e);
   }
   if (shipBest && shipBest.s > 0 && p.ships.length < 15 && affordable(p.resources, E.COSTS.ship)) {
@@ -268,7 +271,7 @@ function greedyBuild(game, idx, level) {
   // ほかに何もできないときだけ、銀行・港と交易する（ふつうも、これがないと資源の偏りで詰まることがある）
   if (tryHelpfulTrade(game, idx)) return true;
   // 盤がほぼ埋まって新しい開拓地が見込めないときの最後の手: 長い交易路を狙って道・船だけは伸ばす
-  if (p.roads.length < 15 && edges.length && affordable(p.resources, E.COSTS.road) && game.longestRoadPlayer !== idx) {
+  if (p.roads.length < 15 && edges.length && game.longestRoadPlayer !== idx) {
     return E.buildRoad(game, edges[0]);
   }
   if (p.ships.length < 15 && ships.length && affordable(p.resources, E.COSTS.ship) && game.longestRoadPlayer !== idx) {
@@ -287,8 +290,8 @@ function pickTargetCost(game, idx) {
 }
 function shouldPlayKnight(game, idx) {
   const p = game.players[idx];
-  const robberHex = game.board.hexes[game.board.robberHex];
-  if (robberHex.vertexIds.some((vid) => { const b = game.board.vertices[vid].building; return b && b.owner === idx; })) return true;
+  const robberHex = game.board.robberHex != null ? game.board.hexes[game.board.robberHex] : null;
+  if (robberHex && robberHex.vertexIds.some((vid) => { const b = game.board.vertices[vid].building; return b && b.owner === idx; })) return true;
   if (p.knightsPlayed + 1 >= 3 && game.largestArmyPlayer !== idx) return true;
   const myScore = E.playerScore(game, idx);
   const leaderScore = Math.max(...game.players.map((_, i) => E.playerScore(game, i)));
@@ -489,8 +492,75 @@ function ckStep(game, idx, level) {
   return false;
 }
 
+// ---- 交易と略奪: 漁師（魚を貯めて得なときに使う。人の交易と違って自分だけで決められる） ----
+function fishermenStep(game, idx, level) {
+  if (game.scenario !== 'fishermen') return false;
+  const p = game.players[idx];
+  const fish = p.fish || 0;
+  // 盗賊が自分の産出をふさいでいるなら、2匹で盤外へ出す
+  if (fish >= 2 && game.board.robberHex != null) {
+    const hex = game.board.hexes[game.board.robberHex];
+    if (hex.vertexIds.some((vid) => { const b = game.board.vertices[vid].building; return b && b.owner === idx; })) {
+      if (E.fishRobberAway(game)) return true;
+    }
+  }
+  if (fish >= 7 && level !== 'weak' && game.bank.devDeck.length && E.fishDevCard(game)) return true;
+  if (fish >= 5 && level === 'strong') {
+    const edges = E.availableRoadEdges(game, idx);
+    if (edges.length) {
+      const best = edges.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s)[0];
+      if (best.s > 0 && E.fishRoad(game, best.e)) return true;
+    }
+  }
+  if (fish >= 4) {
+    const cost = pickTargetCost(game, idx);
+    const need = cost ? Object.entries(cost).filter(([r, n]) => (p.resources[r] || 0) < n).map(([r]) => r) : [];
+    if (need.length && E.fishResource(game, need[0])) return true;
+  }
+  if (fish >= 3 && level !== 'weak') {
+    const others = game.players.map((_, i) => i).filter((i) => i !== idx).sort((a, b) => E.playerScore(game, b) - E.playerScore(game, a));
+    if (others.length && E.fishSteal(game, others[0])) return true;
+  }
+  return false;
+}
+// ---- 交易と略奪: 川（金貨2枚が貯まったら、今欲しい資源に替える） ----
+function riversStep(game, idx) {
+  if (game.scenario !== 'rivers') return false;
+  const p = game.players[idx];
+  if ((p.gold || 0) < 2) return false;
+  const cost = pickTargetCost(game, idx);
+  const need = cost ? Object.entries(cost).filter(([r, n]) => (p.resources[r] || 0) < n).map(([r]) => r) : [];
+  return E.tradeGold(game, need[0] || E.RESOURCES[0]);
+}
+// ---- 交易と略奪: 隊商（自分の開拓地・都市がラクダに挟まれるように動かす。よわいは動かさない） ----
+function caravanStep(game, idx, level) {
+  if (game.scenario !== 'caravans' || level === 'weak' || !E.canMoveCamels(game, idx)) return false;
+  const vNow = game.board.camelVertexId;
+  if (vNow != null) {
+    const b = game.board.vertices[vNow].building;
+    if (b && b.owner === idx) return false; // すでに自分の下にあるなら動かさない
+  }
+  const desert = game.board.hexes[game.board.camelHexId];
+  const ids = desert.edgeIds;
+  const curA = ids.indexOf(game.board.camelEdgeA);
+  const vertexAfter = (dir) => {
+    const next = (curA + dir + 6) % 6;
+    const a = game.board.edges[ids[next]], b = game.board.edges[ids[(next + 1) % 6]];
+    return [a.v1, a.v2].find((v) => v === b.v1 || v === b.v2);
+  };
+  for (const dir of [1, -1]) {
+    const v = vertexAfter(dir);
+    const b = v != null && game.board.vertices[v].building;
+    if (b && b.owner === idx) return E.moveCamels(game, dir);
+  }
+  return false;
+}
+
 function mainStep(game, idx, level) {
   if (ckStep(game, idx, level)) return true;
+  if (fishermenStep(game, idx, level)) return true;
+  if (riversStep(game, idx)) return true;
+  if (caravanStep(game, idx, level)) return true;
   if (level === 'weak') return weakMainStep(game, idx);
   if (level === 'strong' && strongStep(game, idx)) return true;
   if (greedyBuild(game, idx, level)) return true;
