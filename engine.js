@@ -138,7 +138,7 @@ function boardCoords(ext) {
   }
   for (let r = -3; r <= 3; r++) {
     const n = 6 - Math.abs(r);
-    const qStart = r <= 0 ? -3 : -3 + r;
+    const qStart = r <= 0 ? -3 - r : -3; // 各列を左右対称に並べる
     for (let i = 0; i < n; i++) coords.push({ q: qStart + i, r });
   }
   return coords;

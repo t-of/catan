@@ -154,14 +154,14 @@ test('勝利判定: 得点が10に届くと winner が立つ', () => {
   assert.equal(E.playerScore(g, 0), 10);
 });
 
-test('5〜6人拡張: 自動で30マス・86頂点・115辺・地形/数字チップ/港の構成、銀行24枚・発展カード34枚、6と8が隣り合わない', () => {
+test('5〜6人拡張: 自動で30マス・80頂点・109辺・地形/数字チップ/港の構成、銀行24枚・発展カード34枚、6と8が隣り合わない', () => {
   for (const count of [5, 6]) {
     for (let i = 0; i < 10; i++) {
       const g = E.createGame(count, Math.random);
       assert.deepEqual(g.expansions, ['5-6player']);
       assert.equal(g.board.hexes.length, 30);
-      assert.equal(g.board.vertices.length, 86);
-      assert.equal(g.board.edges.length, 115);
+      assert.equal(g.board.vertices.length, 80);
+      assert.equal(g.board.edges.length, 109);
       const counts = {};
       g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
       assert.deepEqual(counts, { forest: 6, hills: 5, pasture: 6, field: 6, mountains: 5, desert: 2 });
