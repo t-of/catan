@@ -3,6 +3,7 @@
 // ここは見た目の組み立てと入力だけ。
 import * as E from './engine.js';
 import * as I from './illust.js';
+import * as CPU from './cpu.js';
 
 // localStorage はほかのアプリと共有される（同じ t-of.github.io のため）。キーは必ず 'catan.' で始める。
 const STORE = 'catan.';
@@ -69,6 +70,7 @@ const els = {
   gamePanel: document.getElementById('gamePanel'),
   titleBoard: document.getElementById('titleBoard'),
   playerCountPicker: document.getElementById('playerCountPicker'),
+  seatsPanel: document.getElementById('seatsPanel'),
   startBtn: document.getElementById('startBtn'),
   continueBtn: document.getElementById('continueBtn'),
   turnNum: document.getElementById('turnNum'),
@@ -162,23 +164,70 @@ els.playerCountPicker.addEventListener('click', (e) => {
   playerCount = Number(btn.dataset.count);
   save('playerCount', playerCount);
   syncCountPicker();
+  renderSeatsPanel();
 });
 function syncCountPicker() {
   [...els.playerCountPicker.children].forEach((b) => b.classList.toggle('is-selected', Number(b.dataset.count) === playerCount));
 }
 syncCountPicker();
 
+// ---- 席ごとの人／CPU選び ----
+// uiSeats: タイトル画面で編集中の下書き（4席ぶん持っておき、人数に合わせて先頭から使う）。
+// seats: 今プレイ中（続きから、を含む）の対局で実際に使っている席の設定。古い保存（席の情報がない）は全員「人」として引き継ぐ。
+function defaultSeat(i) { return { type: i === 0 ? 'human' : 'cpu', level: 'normal' }; }
+let uiSeats = load('seats', null) || [0, 1, 2, 3].map(defaultSeat);
+if (!Array.isArray(uiSeats) || uiSeats.length < 4) uiSeats = [0, 1, 2, 3].map((i) => uiSeats[i] || defaultSeat(i));
+let seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
+
+function isCpuSeat(i) { return !!(seats[i] && seats[i].type === 'cpu'); }
+function seatLevel(i) { return (seats[i] && seats[i].level) || 'normal'; }
+
+function renderSeatsPanel() {
+  els.seatsPanel.innerHTML = '';
+  for (let i = 0; i < playerCount; i++) {
+    const seat = uiSeats[i];
+    const row = document.createElement('div');
+    row.className = 'seat-row';
+    row.innerHTML = `<span class="seat-row__name">P${i + 1}</span>
+      <div class="segmented seat-row__type">
+        <button class="btn" data-i="${i}" data-type="human">人</button>
+        <button class="btn" data-i="${i}" data-type="cpu">CPU</button>
+      </div>
+      <div class="segmented seat-row__level"${seat.type === 'cpu' ? '' : ' hidden'}>
+        ${CPU.LEVELS.map((l) => `<button class="btn" data-i="${i}" data-level="${l.id}">${l.name}</button>`).join('')}
+      </div>`;
+    row.querySelector('[data-type="human"]').classList.toggle('is-selected', seat.type === 'human');
+    row.querySelector('[data-type="cpu"]').classList.toggle('is-selected', seat.type === 'cpu');
+    row.querySelectorAll('[data-level]').forEach((b) => b.classList.toggle('is-selected', b.dataset.level === seat.level));
+    els.seatsPanel.appendChild(row);
+  }
+}
+els.seatsPanel.addEventListener('click', (e) => {
+  const typeBtn = e.target.closest('[data-type]');
+  const levelBtn = e.target.closest('[data-level]');
+  if (typeBtn) uiSeats[Number(typeBtn.dataset.i)].type = typeBtn.dataset.type;
+  else if (levelBtn) uiSeats[Number(levelBtn.dataset.i)].level = levelBtn.dataset.level;
+  else return;
+  save('seats', uiSeats);
+  renderSeatsPanel();
+});
+renderSeatsPanel();
+
 els.startBtn.addEventListener('click', () => {
+  seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
   game = E.createGame(playerCount, Math.random);
   ui = { mode: modeForPhase(), data: {} };
   showGame();
   save('game', game);
+  save('gameSeats', seats);
   renderAll();
 });
 els.continueBtn.addEventListener('click', () => {
   const saved = load('game', null);
   if (!saved || saved.winner != null) return;
   game = saved;
+  const savedSeats = load('gameSeats', null);
+  seats = (savedSeats && savedSeats.length === game.playerCount) ? savedSeats : Array.from({ length: game.playerCount }, () => ({ type: 'human', level: 'normal' }));
   ui = { mode: modeForPhase(), data: {} };
   showGame();
   renderAll();
@@ -208,6 +257,36 @@ function playEvents() {
   if (!game) return;
   const evts = game.events.splice(0, game.events.length);
   evts.forEach((e) => { if (SOUND[e]) SOUND[e](); });
+}
+
+// ================================================================
+// CPU の自動進行。人が追えるよう、手ごとに少し間をあけて1手ずつ進める（cpu.js の公開関数だけを呼ぶ）。
+// ================================================================
+const CPU_DELAY_MS = 650;
+let cpuTimer = null;
+// 次にCPUがすべきこと（捨て札はcurrentPlayerと無関係に、席がCPUの人から片付ける）を1つ返す。無ければ人の番。
+function nextCpuJob() {
+  if (!game || game.winner != null) return null;
+  if (game.phase === 'discard') {
+    const d = game.pendingDiscards.find((x) => isCpuSeat(x.player));
+    return d ? { kind: 'discard', player: d.player } : null;
+  }
+  return isCpuSeat(E.currentPlayer(game)) ? { kind: 'step' } : null;
+}
+function scheduleCpu() {
+  if (cpuTimer || !game) return;
+  const job = nextCpuJob();
+  if (!job) return;
+  cpuTimer = setTimeout(() => {
+    cpuTimer = null;
+    if (job.kind === 'discard') CPU.discardFor(game, job.player, seatLevel(job.player));
+    else CPU.step(game, seatLevel(E.currentPlayer(game)));
+    ui = { mode: modeForPhase(), data: {} };
+    playEvents();
+    save('game', game);
+    renderAll();
+    scheduleCpu();
+  }, CPU_DELAY_MS);
 }
 
 // ================================================================
@@ -414,8 +493,9 @@ function renderPlayers() {
     const bonus = [];
     if (game.longestRoadPlayer === i) bonus.push('最長路');
     if (game.largestArmyPlayer === i) bonus.push('騎士団');
+    const cpuTag = isCpuSeat(i) ? `CPU・${CPU.LEVELS.find((l) => l.id === seatLevel(i))?.name || ''}` : '人';
     body.innerHTML = `<div class="player-card__name">P${i + 1}${i === idx ? '<span class="player-card__cur">手番</span>' : ''}</div>`
-      + `<div class="player-card__sub">手札 ${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)}・騎士 ${p.knightsPlayed}</div>`
+      + `<div class="player-card__sub">${cpuTag}・手札 ${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)}・騎士 ${p.knightsPlayed}</div>`
       + `<div class="player-card__extra">${bonus.join(' ')}</div>`;
     const vp = document.createElement('div');
     vp.className = 'player-card__vp';
@@ -479,6 +559,7 @@ function renderBanner() {
   else if (game.phase === 'discard') { main = `プレイヤー${game.pendingDiscards[0].player + 1}は${game.pendingDiscards[0].count}枚捨てます。`; hint = '窓で捨てる資源を選んでください。'; }
   else if (game.phase === 'moveRobber') { main = `プレイヤー${idx + 1}の番。`; hint = '盗賊を動かすタイルをタップ。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
+  if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
   if (ui.mode === 'buildRoad') hint = '道を置く場所をタップ。';
   else if (ui.mode === 'buildSettlement') hint = '開拓地を置く場所をタップ。';
   else if (ui.mode === 'buildCity') hint = '都市にする開拓地をタップ。';
@@ -510,7 +591,7 @@ function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (r
 function renderBuildGrid() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
-  const inMain = game.phase === 'main';
+  const inMain = game.phase === 'main' && humansTurn();
   const defs = [
     { key: 'road', label: '道', cost: E.COSTS.road, ok: inMain && p.roads.length < 15 && canAfford(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length },
     { key: 'settlement', label: '開拓地', cost: E.COSTS.settlement, ok: inMain && p.settlements.length < 5 && canAfford(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length },
@@ -546,7 +627,13 @@ function openPanel() { els.panelOverlay.hidden = false; }
 function closePanel() { els.panelOverlay.hidden = true; els.panel.innerHTML = ''; }
 
 function renderPanel() {
-  if (ui.mode === 'discard' && game.phase === 'discard') { openPanel(); renderDiscardPanel(); return; }
+  // 捨て札はCPUの分を先に片付けてよいので、人が窓で捨てるのは「人の席でまだ残っている分」だけ
+  if (ui.mode === 'discard' && game.phase === 'discard') {
+    const d = game.pendingDiscards.find((x) => !isCpuSeat(x.player));
+    if (d) { openPanel(); renderDiscardPanel(d); }
+    else closePanel();
+    return;
+  }
   if (ui.data.pendingHex != null) { openPanel(); renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev); return; }
   if (ui.mode === 'tradeMenu') { openPanel(); renderTradeMenu(); return; }
   if (ui.mode === 'devMenu') { openPanel(); renderDevMenu(); return; }
@@ -572,8 +659,7 @@ function bindPanel(actions) {
   };
 }
 
-function renderDiscardPanel() {
-  const d = game.pendingDiscards[0];
+function renderDiscardPanel(d) {
   const p = game.players[d.player];
   const picked = ui.data.discardPicked || (ui.data.discardPicked = E.RESOURCES.reduce((o, r) => ({ ...o, [r]: 0 }), {}));
   const total = Object.values(picked).reduce((a, b) => a + b, 0);
@@ -595,7 +681,8 @@ function renderDiscardPanel() {
     confirm: () => {
       E.discardCards(game, d.player, picked);
       ui.data.discardPicked = null;
-      if (game.phase === 'discard') { renderPanel(); } else { ui = { mode: 'moveRobber', data: {} }; persistAndRender(); }
+      if (game.phase !== 'discard') ui = { mode: 'moveRobber', data: {} };
+      persistAndRender(); // 捨て札が残っていればCPUの分を自動で進め、人の分が残っていれば窓を出し直す
     },
   });
 }
@@ -767,9 +854,15 @@ function renderDevRoadFinish() {
 // ================================================================
 // 操作ボタン
 // ================================================================
+// CPU の手番・捨て札の最中は、盤やボタンを人が触っても動かない（CPUの手として誤って進んでしまうのを防ぐ）
+function humansTurn() {
+  if (!game) return false;
+  if (game.phase === 'discard') return game.pendingDiscards.some((d) => !isCpuSeat(d.player));
+  return !isCpuSeat(E.currentPlayer(game));
+}
 function renderActionBar() {
-  const rollable = game.phase === 'roll';
-  const buildable = game.phase === 'main';
+  const rollable = game.phase === 'roll' && humansTurn();
+  const buildable = game.phase === 'main' && humansTurn();
   els.diceBtn.disabled = !rollable;
   els.tradeBtn.disabled = !buildable;
   els.devBtn.disabled = !buildable;
@@ -777,15 +870,16 @@ function renderActionBar() {
   els.endTurnBtn.disabled = !buildable;
 }
 els.diceBtn.addEventListener('click', () => {
-  if (game.phase !== 'roll') return;
+  if (game.phase !== 'roll' || !humansTurn()) return;
   E.rollDice(game);
   ui = { mode: modeForPhase(), data: {} };
   playEvents();
   persistAndRender();
 });
-els.tradeBtn.addEventListener('click', () => { ui = { mode: 'tradeMenu', data: {} }; renderAll(); });
-els.devBtn.addEventListener('click', () => { ui = { mode: 'devMenu', data: {} }; renderAll(); });
+els.tradeBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'tradeMenu', data: {} }; renderAll(); });
+els.devBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'devMenu', data: {} }; renderAll(); });
 els.endTurnBtn.addEventListener('click', () => {
+  if (!humansTurn()) return;
   E.endTurn(game);
   ui = { mode: 'idle', data: {} };
   persistAndRender();
@@ -795,6 +889,7 @@ els.endTurnBtn.addEventListener('click', () => {
 // 盤面のタップ
 // ================================================================
 els.board.addEventListener('click', (e) => {
+  if (!humansTurn()) return;
   const vEl = e.target.closest('[data-vertex]');
   const eEl = e.target.closest('[data-edge]');
   const hEl = e.target.closest('[data-hex]');
@@ -855,4 +950,5 @@ function renderAll() {
   renderBanner();
   renderActionBar();
   renderPanel();
+  scheduleCpu(); // CPUの番なら、ここで自動進行の予約をする（renderAllはすべての操作の後に呼ばれる）
 }

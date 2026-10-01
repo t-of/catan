@@ -118,6 +118,15 @@ button { font: inherit; color: inherit; }
 .segmented { display: flex; gap: 6px; flex: 1; }
 .segmented .btn { flex: 1; }
 
+/* ---- 席ごとの人／CPU選び ---- */
+.seats { display: flex; flex-direction: column; gap: 6px; }
+.seat-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.seat-row__name { width: 32px; flex: none; font-size: 13px; color: var(--muted); }
+.seat-row__type { flex: 1 1 auto; min-width: 120px; }
+.seat-row__type .btn { min-height: 36px; font-size: 12px; padding: 6px 8px; }
+.seat-row__level { flex: 1 1 100%; display: flex; gap: 6px; }
+.seat-row__level .btn { flex: 1; min-height: 32px; font-size: 11px; padding: 4px 6px; }
+
 /* ---- ゲーム画面: PC は 3 列（左: ロゴ・プレイヤー・銀行／中央: 盤／右: 手札・建設・操作） ---- */
 .game {
   flex: 1;

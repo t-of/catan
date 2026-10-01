@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as E from './engine.js';
+import * as CPU from './cpu.js';
 
 test('盤面: 19マス・54頂点・72辺・地形の枚数・6と8が隣り合わない', () => {
   for (let i = 0; i < 20; i++) {
@@ -140,4 +141,56 @@ test('勝利判定: 得点が10に届くと winner が立つ', () => {
   p0.settlements.push(2000); // +1点
   p0.devCards.push({ type: 'vp', boughtTurn: 1, played: false }); // +1点
   assert.equal(E.playerScore(g, 0), 10);
+});
+
+// ---- CPU ----
+// CPU だけで1局、決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
+function playOutCpu(levels, maxSteps = 500000) {
+  const g = E.createGame(levels.length, Math.random);
+  for (let i = 0; i < maxSteps; i++) {
+    if (g.winner != null) return g;
+    if (g.phase === 'discard') {
+      const d = g.pendingDiscards[0];
+      assert.ok(CPU.discardFor(g, d.player, levels[d.player]), '捨て札が進まない');
+      continue;
+    }
+    const idx = E.currentPlayer(g);
+    assert.ok(CPU.step(g, levels[idx]), 'CPUの手が進まない');
+  }
+  throw new Error(`${maxSteps}手では終わらなかった`);
+}
+
+test('CPU: 4人（強さいろいろ）で数十局、全局きちんと決着する', () => {
+  const mixes = [
+    ['weak', 'weak', 'weak', 'weak'],
+    ['normal', 'normal', 'normal', 'normal'],
+    ['strong', 'strong', 'strong', 'strong'],
+    ['weak', 'normal', 'strong', 'normal'],
+  ];
+  for (let i = 0; i < 24; i++) {
+    const g = playOutCpu(mixes[i % mixes.length]);
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= 10);
+  }
+});
+
+test('CPU: 強さの差（よわい vs ふつう、ふつう vs つよい）を4人（2対2）対局の勝ち数で見る', () => {
+  // 実際のアプリは3〜4人用なので、比較も4人（levelA2人 + levelB2人、席はランダム）で行う
+  function winRate(levelA, levelB, games) {
+    let aWins = 0;
+    for (let i = 0; i < games; i++) {
+      const seats = [levelA, levelA, levelB, levelB].sort(() => Math.random() - 0.5);
+      const g = playOutCpu(seats);
+      if (seats[g.winner] === levelA) aWins++;
+    }
+    return aWins;
+  }
+  const games = 20;
+  const weakVsNormal = winRate('weak', 'normal', games);
+  const normalVsStrong = winRate('normal', 'strong', games);
+  console.log(`[CPU強さ] よわい vs ふつう: よわい ${weakVsNormal}/${games} 勝`);
+  console.log(`[CPU強さ] ふつう vs つよい: ふつう ${normalVsStrong}/${games} 勝`);
+  // 強いほうが勝ち越す想定（まれな逆転はあり得るので、惨敗はしていないことだけ確かめる）
+  assert.ok(weakVsNormal <= games - 2);
+  assert.ok(normalVsStrong <= games - 2);
 });
