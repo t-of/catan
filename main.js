@@ -262,7 +262,18 @@ function playEvents() {
 // ================================================================
 // CPU の自動進行。人が追えるよう、手ごとに少し間をあけて1手ずつ進める（cpu.js の公開関数だけを呼ぶ）。
 // ================================================================
-const CPU_DELAY_MS = 650;
+// CPU の速さ。テストプレイ用に速くできる（ヘッダーのボタンで順に切り替え）。
+const CPU_SPEEDS = [['ふつう', 650], ['はやい', 150], ['最速', 0]];
+const cpuSpeedBtn = document.getElementById('cpuSpeedBtn');
+let cpuSpeed = load('cpuSpeed', 0);
+if (!CPU_SPEEDS[cpuSpeed]) cpuSpeed = 0;
+function showCpuSpeed() { cpuSpeedBtn.textContent = 'CPU ' + CPU_SPEEDS[cpuSpeed][0]; }
+showCpuSpeed();
+cpuSpeedBtn.addEventListener('click', () => {
+  cpuSpeed = (cpuSpeed + 1) % CPU_SPEEDS.length;
+  save('cpuSpeed', cpuSpeed);
+  showCpuSpeed();
+});
 let cpuTimer = null;
 // 次にCPUがすべきこと（捨て札はcurrentPlayerと無関係に、席がCPUの人から片付ける）を1つ返す。無ければ人の番。
 function nextCpuJob() {
@@ -286,7 +297,7 @@ function scheduleCpu() {
     save('game', game);
     renderAll();
     scheduleCpu();
-  }, CPU_DELAY_MS);
+  }, CPU_SPEEDS[cpuSpeed][1]);
 }
 
 // ================================================================
