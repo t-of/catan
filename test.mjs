@@ -154,6 +154,76 @@ test('勝利判定: 得点が10に届くと winner が立つ', () => {
   assert.equal(E.playerScore(g, 0), 10);
 });
 
+test('5〜6人拡張: 自動で30マス・86頂点・115辺・地形/数字チップ/港の構成、銀行24枚・発展カード34枚、6と8が隣り合わない', () => {
+  for (const count of [5, 6]) {
+    for (let i = 0; i < 10; i++) {
+      const g = E.createGame(count, Math.random);
+      assert.deepEqual(g.expansions, ['5-6player']);
+      assert.equal(g.board.hexes.length, 30);
+      assert.equal(g.board.vertices.length, 86);
+      assert.equal(g.board.edges.length, 115);
+      const counts = {};
+      g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
+      assert.deepEqual(counts, { forest: 6, hills: 5, pasture: 6, field: 6, mountains: 5, desert: 2 });
+      const nums = g.board.hexes.filter((h) => h.number != null).map((h) => h.number).sort((a, b) => a - b);
+      assert.deepEqual(nums, [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12]);
+      const byCoord = new Map(g.board.hexes.map((h) => [`${h.q},${h.r}`, h]));
+      const dirs = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+      g.board.hexes.forEach((h) => {
+        if (h.number !== 6 && h.number !== 8) return;
+        dirs.forEach(([dq, dr]) => {
+          const n = byCoord.get(`${h.q + dq},${h.r + dr}`);
+          if (n) assert.notEqual(n.number === 6 || n.number === 8, true, '6/8が隣り合っている');
+        });
+      });
+      const portVertices = g.board.vertices.filter((v) => v.port);
+      assert.equal(portVertices.length, 22); // 港11か所 × 頂点2つ
+      const byType = {};
+      portVertices.forEach((v) => { byType[v.port] = (byType[v.port] || 0) + 1; });
+      assert.equal(byType['3:1'], 10); // 3:1 ×5ヶ所
+      assert.equal(byType.sheep, 4); // 羊の2:1が2ヶ所
+      ['wood', 'brick', 'wheat', 'ore'].forEach((r) => assert.equal(byType[r], 2)); // 2:1 ×1ヶ所ずつ
+      assert.deepEqual(g.bank.resources, { wood: 24, brick: 24, sheep: 24, wheat: 24, ore: 24 });
+      assert.equal(g.bank.devDeck.length, 34);
+      const devCounts = {};
+      g.bank.devDeck.forEach((t) => { devCounts[t] = (devCounts[t] || 0) + 1; });
+      assert.deepEqual(devCounts, { knight: 20, vp: 5, roadBuilding: 3, yearOfPlenty: 3, monopoly: 3 });
+    }
+  }
+  // 3〜4人は今までどおり拡張なし
+  assert.deepEqual(E.createGame(4, Math.random).expansions, []);
+});
+
+test('特別建設フェイズ: 手番を終えると、ほかの人が順に建てる・発展カードを買うだけできる', () => {
+  const g = E.createGame(5, Math.random);
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 3;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
+  const v = g.board.vertices.find((x) => x.edgeIds.length >= 2);
+  v.building = { owner: 2, type: 'settlement' }; // 道を置けるよう、あらかじめ開拓地を置いておく
+  g.players[2].settlements.push(v.id);
+  assert.ok(E.endTurn(g));
+  assert.equal(g.phase, 'specialBuilding');
+  assert.deepEqual(g.specialBuildQueue, [2, 3, 4, 0]); // 手番だった1以外が順に並ぶ
+  assert.equal(E.currentPlayer(g), 2);
+  // 発展カードは使えない、銀行・港との交易もできない
+  g.players[2].devCards = [{ type: 'knight', boughtTurn: 1, played: false }];
+  assert.equal(E.playKnight(g, 0, g.board.hexes.find((h) => h.id !== g.board.robberHex).id, null), false);
+  assert.equal(E.bankTrade(g, 'wood', 'ore'), false);
+  // 建てる・発展カードを買うのはできる
+  const edge = E.availableRoadEdges(g, 2)[0];
+  assert.ok(E.buildRoad(g, edge));
+  assert.equal(g.players[2].roads.length, 1);
+  // パスして次の人へ。全員ぶん済んだら、手番を終えた人の次の人が普通の手番（サイコロ待ち）になる
+  assert.ok(E.passSpecialBuild(g));
+  assert.equal(E.currentPlayer(g), 3);
+  assert.ok(E.passSpecialBuild(g));
+  assert.ok(E.passSpecialBuild(g));
+  assert.ok(E.passSpecialBuild(g));
+  assert.equal(g.phase, 'roll');
+  assert.equal(g.turn, 2); // 手番だった1の次の2から
+  assert.equal(g.turnNumber, 4);
+});
+
 // ---- CPU ----
 // CPU だけで1局、決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
 function playOutCpu(levels, maxSteps = 500000) {
@@ -180,6 +250,15 @@ test('CPU: 4人（強さいろいろ）で数十局、全局きちんと決着�
   ];
   for (let i = 0; i < 24; i++) {
     const g = playOutCpu(mixes[i % mixes.length]);
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= 10);
+  }
+});
+
+test('CPU: 6人（5〜6人拡張・特別建設フェイズつき）で最後まで決着する', () => {
+  for (let i = 0; i < 5; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'weak', 'normal', 'strong']);
+    assert.deepEqual(g.expansions, ['5-6player']);
     assert.ok(g.winner != null);
     assert.ok(E.playerScore(g, g.winner) >= 10);
   }

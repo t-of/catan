@@ -305,6 +305,43 @@ function strongStep(game, idx) {
   return false;
 }
 
+// ---- 特別建設フェイズ（5〜6人拡張）: 建てる・発展カードを買うことだけできる。交易・発展カードを使うのは不可 ----
+function specialBuildStep(game, level) {
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  if (level === 'weak') {
+    const opts = [];
+    if (p.roads.length < 15 && affordable(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length) opts.push('road');
+    if (p.settlements.length < 5 && affordable(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length) opts.push('settlement');
+    if (p.cities.length < 4 && affordable(p.resources, E.COSTS.city) && E.availableCityVertices(game, idx).length) opts.push('city');
+    if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) opts.push('dev');
+    if (!opts.length || Math.random() < 0.4) return E.passSpecialBuild(game); // 建てられても、ときどきは様子見でパス
+    const choice = pick(opts);
+    if (choice === 'road') return E.buildRoad(game, pick(E.availableRoadEdges(game, idx)));
+    if (choice === 'settlement') return E.buildSettlement(game, pick(E.availableSettlementVertices(game, idx, false)));
+    if (choice === 'city') return E.buildCity(game, pick(E.availableCityVertices(game, idx)));
+    return E.buyDevCard(game);
+  }
+  // ふつう・つよい: 貪欲に建てる（greedyBuildの建設部分だけ。交易はしない）
+  const cityVs = E.availableCityVertices(game, idx);
+  if (p.cities.length < 4 && cityVs.length && affordable(p.resources, E.COSTS.city)) {
+    return E.buildCity(game, cityVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0]);
+  }
+  const stlVs = E.availableSettlementVertices(game, idx, false);
+  if (p.settlements.length < 5 && stlVs.length && affordable(p.resources, E.COSTS.settlement)) {
+    return E.buildSettlement(game, stlVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0]);
+  }
+  if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) return E.buyDevCard(game);
+  if (level === 'strong') {
+    const edges = E.availableRoadEdges(game, idx);
+    if (p.roads.length < 15 && edges.length && affordable(p.resources, E.COSTS.road)) {
+      const scored = edges.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s);
+      if (scored[0].s > 0) return E.buildRoad(game, scored[0].e);
+    }
+  }
+  return E.passSpecialBuild(game);
+}
+
 function mainStep(game, idx, level) {
   if (level === 'weak') return weakMainStep(game, idx);
   if (level === 'strong' && strongStep(game, idx)) return true;
@@ -323,6 +360,7 @@ export function step(game, level = 'normal') {
     const target = chooseRobberTarget(game, idx, hex, level);
     return E.moveRobber(game, hex, target);
   }
+  if (phase === 'specialBuilding') return specialBuildStep(game, level);
   if (phase === 'main') return mainStep(game, E.currentPlayer(game), level);
   return false;
 }

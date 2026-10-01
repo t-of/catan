@@ -12,6 +12,15 @@ const TERRAIN_COUNTS = { forest: 4, hills: 3, pasture: 4, field: 4, mountains: 3
 const NUMBER_TOKENS = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
 const PORT_TYPES = ['3:1', '3:1', '3:1', '3:1', 'wood', 'brick', 'sheep', 'wheat', 'ore'];
 const BANK_START = 19; // 資源1種あたりの銀行の枚数
+
+// ---- 5〜6人拡張（公式ルール） ----
+// 盤30マス（3-4-5-6-5-4-3列）・数字チップ28枚・港11か所・銀行24枚・発展カード34枚。
+// 他の拡張（航海者版など）を後で足すときも、同じ createGame の options.expansions に名前を足していく形にする。
+const TERRAIN_COUNTS_56 = { forest: 6, hills: 5, pasture: 6, field: 6, mountains: 5, desert: 2 };
+const NUMBER_TOKENS_56 = [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12];
+const PORT_TYPES_56 = ['3:1', '3:1', '3:1', '3:1', '3:1', 'wood', 'brick', 'sheep', 'wheat', 'ore', 'sheep'];
+const BANK_START_56 = 24;
+const DEV_COUNTS_56 = { knight: 20, vp: 5, roadBuilding: 3, yearOfPlenty: 3, monopoly: 3 };
 const MAX_ROADS = 15, MAX_SETTLEMENTS = 5, MAX_CITIES = 4;
 
 export const COSTS = {
@@ -23,7 +32,7 @@ export const COSTS = {
 const DEV_COUNTS = { knight: 14, vp: 5, roadBuilding: 2, yearOfPlenty: 2, monopoly: 2 };
 export const DEV_LABEL = { knight: '騎士', vp: '勝利点', roadBuilding: '街道建設', yearOfPlenty: '収穫', monopoly: '独占' };
 
-export const PLAYER_COLORS = ['#e0553f', '#3f7ee0', '#f0c43c', '#46a86a'];
+export const PLAYER_COLORS = ['#e0553f', '#3f7ee0', '#f0c43c', '#46a86a', '#8a5cc9', '#2bb0b0'];
 
 const HEX_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]; // 隣の軸座標の差
 
@@ -120,10 +129,27 @@ function orderedBoundary(edges) {
   return order;
 }
 
-function buildBoard(rng) {
+// 3〜4人は半径2の六角形（19マス）。5〜6人拡張は3-4-5-6-5-4-3列の縦長の盤（30マス）。
+function boardCoords(ext) {
   const coords = [];
-  for (let q = -2; q <= 2; q++) for (let r = -2; r <= 2; r++) if (q + r >= -2 && q + r <= 2) coords.push({ q, r });
-  const terrainPool = shuffle(Object.entries(TERRAIN_COUNTS).flatMap(([t, n]) => Array(n).fill(t)), rng);
+  if (!ext) {
+    for (let q = -2; q <= 2; q++) for (let r = -2; r <= 2; r++) if (q + r >= -2 && q + r <= 2) coords.push({ q, r });
+    return coords;
+  }
+  for (let r = -3; r <= 3; r++) {
+    const n = 6 - Math.abs(r);
+    const qStart = r <= 0 ? -3 : -3 + r;
+    for (let i = 0; i < n; i++) coords.push({ q: qStart + i, r });
+  }
+  return coords;
+}
+
+function buildBoard(rng, ext) {
+  const coords = boardCoords(ext);
+  const terrainCounts = ext ? TERRAIN_COUNTS_56 : TERRAIN_COUNTS;
+  const numberTokens = ext ? NUMBER_TOKENS_56 : NUMBER_TOKENS;
+  const portSet = ext ? PORT_TYPES_56 : PORT_TYPES;
+  const terrainPool = shuffle(Object.entries(terrainCounts).flatMap(([t, n]) => Array(n).fill(t)), rng);
   const hexes = coords.map((c, i) => ({
     id: i, q: c.q, r: c.r, terrain: terrainPool[i], number: null, edgeIds: [], vertexIds: [],
   }));
@@ -133,7 +159,7 @@ function buildBoard(rng) {
   const nonDesert = hexes.filter((h) => h.terrain !== 'desert');
   let attempt = 0;
   for (;;) {
-    const nums = shuffle(NUMBER_TOKENS, rng);
+    const nums = shuffle(numberTokens, rng);
     nonDesert.forEach((h, i) => { h.number = nums[i]; });
     const bad = nonDesert.some((h) => (h.number === 6 || h.number === 8)
       && neighborsOf(h).some((n) => n.number === 6 || n.number === 8));
@@ -143,7 +169,7 @@ function buildBoard(rng) {
 
   const { vertices, edges } = buildGeometry(hexes);
   const boundary = orderedBoundary(edges);
-  const portTypes = shuffle(PORT_TYPES, rng);
+  const portTypes = shuffle(portSet, rng);
   const portEdgeIds = [];
   portTypes.forEach((type, i) => {
     const edgeId = boundary[Math.round((i * boundary.length) / portTypes.length)];
@@ -155,15 +181,21 @@ function buildBoard(rng) {
   return { hexes, vertices, edges, robberHex: desert.id, portEdgeIds };
 }
 
-function buildDevDeck(rng) {
-  return shuffle(Object.entries(DEV_COUNTS).flatMap(([t, n]) => Array(n).fill(t)), rng);
+function buildDevDeck(rng, ext) {
+  const counts = ext ? DEV_COUNTS_56 : DEV_COUNTS;
+  return shuffle(Object.entries(counts).flatMap(([t, n]) => Array(n).fill(t)), rng);
 }
 
 // ================================================================
 // ゲームの作成
+// options.expansions: 使う拡張の名前の配列（今は '5-6player' だけ実装。5〜6人を選ぶと自動で足される）。
+// 航海者版・都市と騎士・交易と略奪を足すときも、ここに名前を増やしていく。
 // ================================================================
-export function createGame(playerCount, rng = Math.random) {
-  const board = buildBoard(rng);
+export function createGame(playerCount, rng = Math.random, options = {}) {
+  const expansions = options.expansions || (playerCount >= 5 ? ['5-6player'] : []);
+  const ext = expansions.includes('5-6player');
+  const board = buildBoard(rng, ext);
+  const bankStart = ext ? BANK_START_56 : BANK_START;
   const players = Array.from({ length: playerCount }, (_, i) => ({
     idx: i,
     color: PLAYER_COLORS[i],
@@ -176,13 +208,14 @@ export function createGame(playerCount, rng = Math.random) {
   const setupOrder = Array.from({ length: playerCount }, (_, i) => i); // 1周目は順に。2周目は setup2 で逆順にする
   return {
     playerCount,
+    expansions,
     players,
     board,
     bank: {
-      resources: { wood: BANK_START, brick: BANK_START, sheep: BANK_START, wheat: BANK_START, ore: BANK_START },
-      devDeck: buildDevDeck(rng),
+      resources: { wood: bankStart, brick: bankStart, sheep: bankStart, wheat: bankStart, ore: bankStart },
+      devDeck: buildDevDeck(rng, ext),
     },
-    phase: 'setup1', // setup1 → setup2 → roll → main / discard / moveRobber → gameOver
+    phase: 'setup1', // setup1 → setup2 → roll → main / discard / moveRobber / specialBuilding → gameOver
     setupOrder,
     setupIndex: 0,
     setupPending: 'settlement', // 'settlement' | 'road'
@@ -192,6 +225,8 @@ export function createGame(playerCount, rng = Math.random) {
     diceLast: null,
     devCardPlayedThisTurn: false,
     pendingDiscards: [], // [{ player, count }]
+    specialBuildQueue: [], // 5〜6人拡張の特別建設フェイズ: 手番を終えた人以外が順に並ぶ
+    specialBuildIdx: 0,
     longestRoadPlayer: null,
     largestArmyPlayer: null,
     winner: null,
@@ -202,6 +237,7 @@ export function createGame(playerCount, rng = Math.random) {
 
 export function currentPlayer(game) {
   if (game.phase === 'setup1' || game.phase === 'setup2') return game.setupOrder[game.setupIndex];
+  if (game.phase === 'specialBuilding') return game.specialBuildQueue[game.specialBuildIdx];
   return game.turn;
 }
 
@@ -444,7 +480,10 @@ function recalcLargestArmy(game) {
 }
 
 // ---- 建設 ----
+function canBuildNow(game) { return game.phase === 'main' || game.phase === 'specialBuilding'; }
+
 export function buildRoad(game, edgeId, { free } = {}) {
+  if (!free && !canBuildNow(game)) return false; // free はテスト用の道の直置き（長い交易路の検証など）。本来のフェイズ縛りは受けない
   const idx = currentPlayer(game);
   const p = game.players[idx];
   if (p.roads.length >= MAX_ROADS) return false;
@@ -462,6 +501,7 @@ export function buildSettlement(game, vertexId) {
   const p = game.players[idx];
   const isSetup = game.phase === 'setup1' || game.phase === 'setup2';
   if (isSetup) return setupPlaceSettlement(game, vertexId);
+  if (!canBuildNow(game)) return false;
   if (p.settlements.length >= MAX_SETTLEMENTS) return false;
   if (!canPlaceSettlement(game, vertexId, idx, false)) return false;
   if (!canAfford(p.resources, COSTS.settlement)) return false;
@@ -475,6 +515,7 @@ export function buildSettlement(game, vertexId) {
   return true;
 }
 export function buildCity(game, vertexId) {
+  if (!canBuildNow(game)) return false;
   const idx = currentPlayer(game);
   const p = game.players[idx];
   const v = game.board.vertices[vertexId];
@@ -492,6 +533,7 @@ export function buildCity(game, vertexId) {
 }
 
 export function buyDevCard(game) {
+  if (!canBuildNow(game)) return false;
   const idx = currentPlayer(game);
   const p = game.players[idx];
   if (!game.bank.devDeck.length) return false;
@@ -506,6 +548,7 @@ export function buyDevCard(game) {
 }
 
 function canPlayDev(game, playerIdx, cardIdx) {
+  if (game.phase !== 'main') return false; // 特別建設フェイズでは発展カードを使えない
   if (game.devCardPlayedThisTurn) return false;
   const p = game.players[playerIdx];
   const card = p.devCards[cardIdx];
@@ -574,6 +617,7 @@ export function playerPortRate(game, playerIdx, res) {
   return 4;
 }
 export function bankTrade(game, giveRes, wantRes) {
+  if (game.phase !== 'main') return false; // 特別建設フェイズでは交易できない
   const idx = currentPlayer(game);
   const p = game.players[idx];
   const rate = playerPortRate(game, idx, giveRes);
@@ -587,6 +631,7 @@ export function bankTrade(game, giveRes, wantRes) {
   return true;
 }
 export function playerTrade(game, otherIdx, give, get) {
+  if (game.phase !== 'main') return false; // 特別建設フェイズでは交易できない
   const idx = currentPlayer(game);
   if (idx === otherIdx) return false;
   const a = game.players[idx], b = game.players[otherIdx];
@@ -598,12 +643,41 @@ export function playerTrade(game, otherIdx, give, get) {
   return true;
 }
 
-export function endTurn(game) {
-  if (game.phase !== 'main') return false;
-  game.devCardPlayedThisTurn = false;
+// 手番を終えたあと、5〜6人拡張では「特別建設フェイズ」に入る。手番を終えた人以外が、
+// 手番の順で1人ずつ、建てる・発展カードを買うことだけできる（交易・発展カードを使うのは不可）。
+// 誰からも passSpecialBuild が来るまで続く。
+function startSpecialBuilding(game) {
+  const finished = game.turn;
+  const queue = [];
+  for (let i = 1; i < game.playerCount; i++) queue.push((finished + i) % game.playerCount);
+  if (!queue.length) { advanceTurn(game); return; }
+  game.specialBuildQueue = queue;
+  game.specialBuildIdx = 0;
+  game.phase = 'specialBuilding';
+}
+function advanceTurn(game) {
   game.turn = advanceIdx(game, game.turn);
   game.turnNumber++;
   game.phase = 'roll';
   game.diceLast = null;
+}
+export function endTurn(game) {
+  if (game.phase !== 'main') return false;
+  game.devCardPlayedThisTurn = false;
+  if (game.expansions && game.expansions.includes('5-6player')) startSpecialBuilding(game);
+  else advanceTurn(game);
+  return true;
+}
+export function passSpecialBuild(game) {
+  if (game.phase !== 'specialBuilding') return false;
+  game.specialBuildIdx++;
+  if (game.specialBuildIdx >= game.specialBuildQueue.length) {
+    game.turn = game.specialBuildQueue[0]; // 手番を終えた人の次の人から、普通の手番を始める
+    game.specialBuildQueue = [];
+    game.specialBuildIdx = 0;
+    game.turnNumber++;
+    game.phase = 'roll';
+    game.diceLast = null;
+  }
   return true;
 }

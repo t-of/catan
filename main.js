@@ -156,7 +156,8 @@ function dieEl(value, rotateDeg) {
 let game = null;
 let robberMovedAt = 0, lastRobberHex = null; // 盗賊が動いた時刻（動いた直後に点滅させる）
 let rolling = false; // サイコロを振るアニメの途中。この間は目の表示をアニメに任せる
-let playerCount = load('playerCount', 3) === 4 ? 4 : 3;
+let playerCount = load('playerCount', 3);
+if (![3, 4, 5, 6].includes(playerCount)) playerCount = 3;
 let ui = { mode: 'idle', data: {} };
 
 // ---- 人数選び ----
@@ -177,8 +178,9 @@ syncCountPicker();
 // uiSeats: タイトル画面で編集中の下書き（4席ぶん持っておき、人数に合わせて先頭から使う）。
 // seats: 今プレイ中（続きから、を含む）の対局で実際に使っている席の設定。古い保存（席の情報がない）は全員「人」として引き継ぐ。
 function defaultSeat(i) { return { type: i === 0 ? 'human' : 'cpu', level: 'normal' }; }
-let uiSeats = load('seats', null) || [0, 1, 2, 3].map(defaultSeat);
-if (!Array.isArray(uiSeats) || uiSeats.length < 4) uiSeats = [0, 1, 2, 3].map((i) => uiSeats[i] || defaultSeat(i));
+const SEAT_SLOTS = [0, 1, 2, 3, 4, 5];
+let uiSeats = load('seats', null) || SEAT_SLOTS.map(defaultSeat);
+if (!Array.isArray(uiSeats) || uiSeats.length < 6) uiSeats = SEAT_SLOTS.map((i) => uiSeats[i] || defaultSeat(i));
 let seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
 
 function isCpuSeat(i) { return !!(seats[i] && seats[i].type === 'cpu'); }
@@ -620,6 +622,7 @@ function renderBanner() {
   } else if (game.phase === 'roll') { main = `プレイヤー${idx + 1}の手番。`; hint = 'サイコロを振ってください。'; }
   else if (game.phase === 'discard') { main = `プレイヤー${game.pendingDiscards[0].player + 1}は${game.pendingDiscards[0].count}枚捨てます。`; hint = '窓で捨てる資源を選んでください。'; }
   else if (game.phase === 'moveRobber') { main = `プレイヤー${idx + 1}の番。`; hint = '盗賊を動かすタイルをタップ。'; }
+  else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: プレイヤー${idx + 1}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
   if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
   if (ui.mode === 'buildRoad') hint = '道を置く場所をタップ。';
@@ -656,7 +659,7 @@ function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (r
 function renderBuildGrid() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
-  const inMain = game.phase === 'main' && humansTurn();
+  const inMain = (game.phase === 'main' || game.phase === 'specialBuilding') && humansTurn();
   const defs = [
     { key: 'road', label: '道', cost: E.COSTS.road, ok: inMain && p.roads.length < 15 && canAfford(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length },
     { key: 'settlement', label: '開拓地', cost: E.COSTS.settlement, ok: inMain && p.settlements.length < 5 && canAfford(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length },
@@ -937,12 +940,14 @@ function humansTurn() {
 }
 function renderActionBar() {
   const rollable = game.phase === 'roll' && humansTurn();
-  const buildable = game.phase === 'main' && humansTurn();
+  const inSBP = game.phase === 'specialBuilding'; // 特別建設フェイズ: 建てる・発展カードを買うだけできる（交易・発展カードを使うのは不可）
+  const buildable = (game.phase === 'main' || inSBP) && humansTurn();
   els.diceBtn.disabled = !rollable || rolling;
-  els.tradeBtn.disabled = !buildable;
-  els.devBtn.disabled = !buildable;
+  els.tradeBtn.disabled = !buildable || inSBP;
+  els.devBtn.disabled = !buildable || inSBP;
   { const n = game.players[E.currentPlayer(game)].devCards.filter((c) => !c.played).length; els.devBtn.textContent = `発展カード${n ? ` ${n}` : ''}`; }
   els.endTurnBtn.disabled = !buildable;
+  els.endTurnBtn.textContent = inSBP ? 'パス' : '手番を終える';
 }
 els.diceBtn.addEventListener('click', () => {
   if (rolling || game.phase !== 'roll' || !humansTurn()) return;
@@ -973,7 +978,7 @@ els.tradeBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = {
 els.devBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'devMenu', data: {} }; renderAll(); });
 els.endTurnBtn.addEventListener('click', () => {
   if (!humansTurn()) return;
-  E.endTurn(game);
+  if (game.phase === 'specialBuilding') E.passSpecialBuild(game); else E.endTurn(game);
   ui = { mode: 'idle', data: {} };
   persistAndRender();
 });
