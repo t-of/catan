@@ -876,6 +876,16 @@ function distributeResources(game, total) {
     });
 }
 
+// 出目で産出するタイルの id（盤の演出用）。distributeResources の判定と合わせる
+// （航海者版の金のタイルは hex.number で、交易と略奪の湖は lakeNumbers で当たる。盗賊のいるマス・征服済みマスは外す）
+export function hitHexIds(game, total) {
+  if (total === 7) return [];
+  return game.board.hexes
+    .filter((hex) => hex.id !== game.board.robberHex && !hex.conquered
+      && (hex.number === total || (hex.terrain === 'lake' && hex.lakeNumbers && hex.lakeNumbers.includes(total))))
+    .map((hex) => hex.id);
+}
+
 // 金の川マスの枚数ぶん、好きな資源を選んで受け取る
 export function pickGold(game, playerIdx, resources) {
   const pending = game.pendingGoldPicks.find((d) => d.player === playerIdx);

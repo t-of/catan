@@ -166,6 +166,7 @@ function dieEl(value, rotateDeg) {
 let game = null;
 let robberMovedAt = 0, lastRobberHex = null; // 盗賊が動いた時刻（動いた直後に点滅させる）
 let pirateMovedAt = 0, lastPirateHex = null; // 海賊版（航海者版のみ使う）
+let diceHitAt = 0, diceHitHexes = []; // サイコロで当たったタイル（振った直後だけ光らせて暗くする）
 let rolling = false; // サイコロを振るアニメの途中。この間は目の表示をアニメに任せる
 let playerCount = load('playerCount', 3);
 if (![3, 4, 5, 6].includes(playerCount)) playerCount = 3;
@@ -360,15 +361,34 @@ function playEvents() {
     setTimeout(() => { if (game) renderAll(); }, 3100);
   }
   lastPirateHex = game.board.pirateHex;
+  if (evts.includes('dice') && game.diceLast) {
+    const hits = E.hitHexIds(game, game.diceLast[0] + game.diceLast[1]);
+    if (hits.length) {
+      diceHitHexes = hits; diceHitAt = performance.now();
+      setTimeout(() => { if (game) renderAll(); }, 1600); // 点滅・暗転を止める
+    }
+  }
   flyGains((game.gains || []).splice(0));
 }
 
-// もらった資源を、マスから手札（手番の人）かプレイヤー欄（ほかの人）へ飛ばす
+// もらった資源を、マスから手札（手番の人）かプレイヤー欄（ほかの人）へ飛ばす。
+// 手番の人には、もらった資源に「+N」も手札の上に出す
 function flyGains(gains) {
   if (!gains.length || document.documentElement.classList.contains('motion-off')) return;
   const ctm = els.board.getScreenCTM();
   if (!ctm) return;
   const cur = E.currentPlayer(game);
+  const gainTotals = {};
+  gains.forEach((gn) => { if (gn.player === cur) gainTotals[gn.res] = (gainTotals[gn.res] || 0) + gn.amt; });
+  Object.entries(gainTotals).forEach(([res, amt]) => {
+    const cell = els.handBar.children[E.RESOURCES.indexOf(res)];
+    if (!cell) return;
+    const badge = document.createElement('span');
+    badge.className = 'gain-badge';
+    badge.textContent = `+${amt}`;
+    cell.appendChild(badge);
+    badge.addEventListener('animationend', () => badge.remove());
+  });
   gains.forEach((gn, k) => {
     const [hx, hy] = hexCenterPx(game, game.board.hexes[gn.hex]);
     const from = new DOMPoint(hx, hy).matrixTransform(ctm);
@@ -580,6 +600,16 @@ function renderBoardInto(svg, g, uiState) {
       I.add(S, I.line(x1, y1, x2, y2), 'none', 0.9, '#1d6e86', 11);
       I.add(S, I.line(x1, y1, x2, y2), 'none', 0.6, '#bfe6ee', 4);
     });
+  }
+  // サイコロの当たり演出: 当たったタイルの縁を光らせて点滅させ、当たっていないタイルを暗くする。
+  // 道・建物より下に描き、描き直しても点滅が頭から始まらないよう振った時刻で遅らせる
+  if (svg === els.board && diceHitHexes.length && performance.now() < diceHitAt + 1500) {
+    g.board.hexes.forEach((hex) => {
+      if (!diceHitHexes.includes(hex.id)) I.add(S, I.poly(hexPointsPx(g, hex)), '#000', 0.35);
+    });
+    const n = S.length;
+    diceHitHexes.forEach((id) => I.add(S, I.poly(hexPointsPx(g, g.board.hexes[id])), 'none', 1, '#fff6c8', 6));
+    I.tag(S, n, 'tile-hit-blink', 0, 0, diceHitAt / 1000);
   }
   // 交易と略奪: 隊商のラクダ（オアシスから伸びる3本のキャラバンを黄土色の帯で表す）
   if (g.board.caravans) {
