@@ -133,8 +133,11 @@ button { font: inherit; color: inherit; }
   min-height: 0;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) 260px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 14px;
 }
+/* 広い画面: ページ全体を画面の高さに固定し、盤は残りに収める（左右の列は中でスクロール） */
+@media (min-width: 901px) { .app { height: 100dvh; } }
 .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; overflow-y: auto; }
 .side-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 4px 2px; gap: 8px; }
 .side-head__brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -287,7 +290,9 @@ button { font: inherit; color: inherit; }
   .players { flex-direction: row; flex-wrap: wrap; }
   .player-card { flex: 1 1 45%; }
   .bank { margin-top: 0; }
-  .board-area { order: -1; min-height: 42vh; }
+  .board-area { order: -1; }
+  /* 盤は幅と画面の高さの小さいほうに収める（横向きのスマホでもはみ出さない） */
+  .stage { flex: none; height: min(calc(100vw - 20px), calc(100dvh - 80px)); }
   .hand { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .builds { flex-direction: row; flex-wrap: wrap; }
   .build-btn { flex: 1 1 45%; }
