@@ -408,7 +408,64 @@ function specialBuildStep(game, level) {
   return E.passSpecialBuild(game);
 }
 
+// ---- 都市と騎士: 進歩カード・騎士・都市の発展・都市壁（複雑な相手選びが要るカードは自動では使わない） ----
+const CK_EASY_CARDS = new Set([
+  'tr_resource1', 'tr_resource2', 'sc_resource1', 'sc_resource2', 'po_resource1',
+  'tr_commodity1', 'po_commodity1', 'sc_commodity1', 'tr_bankgift', 'tr_vp', 'po_vp', 'sc_vp',
+  'tr_trade21', 'tr_trade21x2', 'po_activateall', 'sc_irrigation', 'sc_mining', 'sc_research',
+]);
+function worstResource(res) { return E.RESOURCES.slice().sort((a, b) => (res[a] || 0) - (res[b] || 0))[0]; }
+function playEasyProgressCards(game, idx) {
+  const p = game.players[idx];
+  for (let i = p.progressCards.length - 1; i >= 0; i--) {
+    const card = p.progressCards[i];
+    if (!CK_EASY_CARDS.has(card.id)) continue;
+    if (card.id === 'po_activateall' && !p.knights.some((k) => !k.active)) continue;
+    let params = {};
+    if (card.id === 'tr_resource1' || card.id === 'sc_resource1' || card.id === 'po_resource1') params = { res: worstResource(p.resources) };
+    else if (card.id === 'tr_resource2' || card.id === 'sc_resource2') params = { res: [worstResource(p.resources), worstResource(p.resources)] };
+    else if (card.id === 'tr_commodity1' || card.id === 'po_commodity1' || card.id === 'sc_commodity1') {
+      params = { com: E.COMMODITIES.slice().sort((a, b) => (p.commodities[a] || 0) - (p.commodities[b] || 0))[0] };
+    } else if (card.id === 'tr_trade21' || card.id === 'tr_trade21x2') {
+      const times = card.id === 'tr_trade21x2' ? 2 : 1;
+      const pool = { ...p.resources };
+      const trades = [];
+      for (let t = 0; t < times; t++) {
+        const give = E.RESOURCES.find((r) => (pool[r] || 0) >= 2);
+        if (!give) break;
+        pool[give] -= 2;
+        const want = worstResource(pool);
+        pool[want] = (pool[want] || 0) + 1;
+        trades.push([give, want]);
+      }
+      if (trades.length < times) continue;
+      params = { trades };
+    }
+    if (E.playProgressCard(game, i, params)) return true;
+  }
+  return false;
+}
+function ckStep(game, idx, level) {
+  const p = game.players[idx];
+  if (!p.cityImprovements) return false; // 都市と騎士を使っていない対局では何もしない
+  if (playEasyProgressCards(game, idx)) return true;
+  const cap = level === 'weak' ? 1 : (level === 'normal' ? 2 : E.MAX_KNIGHTS_PER_PLAYER);
+  if (p.cities.length && p.knights.length < cap && affordable(p.resources, E.KNIGHT_COST)) {
+    const vs = E.availableKnightVertices(game, idx);
+    if (vs.length) return E.buildKnight(game, pick(vs));
+  }
+  const inactive = p.knights.find((k) => !k.active);
+  if (inactive && affordable(p.resources, E.KNIGHT_ACTIVATE_COST)) return E.activateKnight(game, inactive.id);
+  if (level !== 'weak') {
+    const tracks = E.TRACKS.filter((t) => E.canImproveCity(game, idx, t));
+    if (tracks.length) return E.improveCity(game, pick(tracks));
+    if (E.canBuildWall(game, idx)) return E.buildWall(game);
+  }
+  return false;
+}
+
 function mainStep(game, idx, level) {
+  if (ckStep(game, idx, level)) return true;
   if (level === 'weak') return weakMainStep(game, idx);
   if (level === 'strong' && strongStep(game, idx)) return true;
   if (greedyBuild(game, idx, level)) return true;

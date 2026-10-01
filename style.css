@@ -85,7 +85,7 @@ button { font: inherit; color: inherit; }
   border-radius: 14px;
   padding: 14px 16px;
 }
-.panel__head { display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+.panel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 14px; font-weight: 700; margin-bottom: 10px; }
 .panel h2 { margin: 0 0 8px; font-family: var(--serif); font-size: 18px; font-weight: 700; color: var(--accent-hi); }
 
 /* ---- 人数選び（タイトル） ---- */
@@ -156,6 +156,17 @@ button { font: inherit; color: inherit; }
 .bank__res { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .bank__res .res-icon { width: 26px; height: 26px; }
 .bank__res b { font-family: var(--serif); font-size: 13px; }
+
+/* ---- 都市と騎士の要約 ---- */
+.ck-panel { display: flex; flex-direction: column; gap: 8px; }
+.ck-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ck-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 999px; font-size: 11px;
+  background: var(--btn-bg); border: 1px solid var(--btn-edge); color: var(--muted);
+}
+.ck-chip.is-active { color: var(--accent-hi); border-color: var(--accent); }
+.ck-chip .res-icon { width: 16px; height: 16px; }
 
 /* ---- 盤面 ---- */
 .board-area { display: flex; flex-direction: column; gap: 10px; min-height: 0; }

@@ -182,6 +182,10 @@ export function resourceIcon(a, kind) {
   if (kind === 'sheep') sheep(a, 18, 30, 1.3);
   if (kind === 'wheat') sheaf(a, 20, 36, 1.3);
   if (kind === 'ore') { peak(a, 14, 34, 18); peak(a, 24, 34, 26); }
+  // 都市と騎士の商品（紙・布・硬貨）: 細かな絵でなく、色付きの札・円で見分けられればよい簡略アイコン
+  if (kind === 'paper') { add(a, rect(8, 10, 24, 22), '#eee6c8', 1, '#8a7a4a', 1.5); add(a, line(12, 17, 28, 17), 'none', 0.6, '#8a7a4a', 1.5); add(a, line(12, 23, 28, 23), 'none', 0.6, '#8a7a4a', 1.5); }
+  if (kind === 'cloth') { add(a, poly([[20, 6], [34, 14], [28, 34], [12, 34], [6, 14]]), '#d66a9a', 1, '#8a3a60', 1.5); }
+  if (kind === 'coin') { add(a, ell(20, 20, 13, 13), '#f0c84a', 1, '#8a6a1e', 2); add(a, ell(20, 20, 7, 7), 'none', 1, '#8a6a1e', 1.2); }
 }
 
 // SVG の <defs> に入れるグラデーション（地形のタイル・数字チップに使う）。

@@ -83,6 +83,7 @@ const els = {
   banner: document.getElementById('banner'),
   playersBar: document.getElementById('playersBar'),
   bankPanel: document.getElementById('bankPanel'),
+  ckPanel: document.getElementById('ckPanel'),
   handBar: document.getElementById('handBar'),
   handCount: document.getElementById('handCount'),
   buildGrid: document.getElementById('buildGrid'),
@@ -134,6 +135,9 @@ function buildIcon(key, color) {
   else if (key === 'city') I.city(shapes, 14, 17, color, dark, light);
   else if (key === 'ship' || key === 'moveShip') I.ship(shapes, 14, 18, key === 'moveShip' ? -20 : 0, color);
   else if (key === 'dev') { I.add(shapes, I.rect(6, 3, 16, 22), '#f6eedb', 1, '#1b1612', 1.5); I.add(shapes, I.rect(9, 6, 10, 10), '#7a5bb8', 0.85); }
+  else if (key === 'knight') I.robber(shapes, 14, 18, 1);
+  else if (key === 'wall') { I.add(shapes, I.rect(3, 15, 22, 7), color, 1, '#1b1612', 1.5); I.add(shapes, I.rect(5, 10, 6, 6), color, 1, '#1b1612', 1.2); I.add(shapes, I.rect(13, 10, 6, 6), color, 1, '#1b1612', 1.2); }
+  else if (key === 'improve') { I.add(shapes, I.poly([[14, 2], [25, 9], [25, 19], [14, 26], [3, 19], [3, 9]]), I.tint(color, 0.1), 1, '#1b1612', 1.5); }
   shapes.forEach((s) => svg.appendChild(pathEl(s)));
   return svg;
 }
@@ -183,7 +187,7 @@ syncCountPicker();
 // ---- 拡張選び（3〜4人だけ選べる。5〜6人は自動で5〜6人拡張） ----
 // 他の拡張（都市と騎士・交易と略奪）も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
 let expansion = load('expansion', 'none');
-if (!['none', 'seafarers'].includes(expansion)) expansion = 'none';
+if (!['none', 'seafarers', 'cities-knights'].includes(expansion)) expansion = 'none';
 els.expansionPicker.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-expansion]');
   if (!btn) return;
@@ -245,7 +249,7 @@ renderSeatsPanel();
 
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
-  const expansions = playerCount <= 4 && expansion === 'seafarers' ? ['seafarers'] : [];
+  const expansions = playerCount <= 4 && expansion !== 'none' ? [expansion] : [];
   game = E.createGame(playerCount, Math.random, { expansions });
   ui = { mode: modeForPhase(), data: {} };
   showGame();
@@ -492,7 +496,8 @@ function renderBoardInto(svg, g, uiState) {
   });
 
   // 道・船（既存＋置ける/動かせる場所）
-  const buildableEdges = uiState && (uiState.mode === 'setupRoad' || uiState.mode === 'buildRoad' || uiState.mode === 'buildShip' || uiState.mode === 'devRoad1' || uiState.mode === 'devRoad2')
+  const buildableEdges = uiState && (uiState.mode === 'setupRoad' || uiState.mode === 'buildRoad' || uiState.mode === 'buildShip' || uiState.mode === 'devRoad1' || uiState.mode === 'devRoad2'
+    || uiState.mode === 'progressEdge1' || uiState.mode === 'progressEdge2')
     ? new Set(edgeChoices()) : new Set();
   const pickableShips = uiState && uiState.mode === 'moveShip1' ? new Set(E.movableShipEdges(g, idx)) : new Set();
   const shipTargets = uiState && uiState.mode === 'moveShip2' ? new Set(E.availableShipEdges(g, idx)) : new Set();
@@ -525,7 +530,11 @@ function renderBoardInto(svg, g, uiState) {
   // 頂点（開拓地・都市・置ける場所）
   const buildableVerts = uiState && (uiState.mode === 'setupSettlement' || uiState.mode === 'buildSettlement')
     ? new Set(vertexChoices())
-    : uiState && uiState.mode === 'buildCity' ? new Set(E.availableCityVertices(g, idx)) : new Set();
+    : uiState && uiState.mode === 'buildCity' ? new Set(E.availableCityVertices(g, idx))
+    : uiState && uiState.mode === 'buildKnight' ? new Set(E.availableKnightVertices(g, idx))
+    : uiState && uiState.mode === 'progressVertex' ? new Set(E.availableKnightVertices(g, idx))
+    : uiState && uiState.mode === 'moveKnightTo' ? new Set(E.movableKnightVertices(g, idx, uiState.data.knightId))
+    : new Set();
   g.board.vertices.forEach((v) => {
     const x = v.x * SCALE, y = v.y * SCALE;
     if (v.building) {
@@ -539,6 +548,18 @@ function renderBoardInto(svg, g, uiState) {
       queue('circle', { cx: x, cy: y, r: 12, class: 'vertex-hit', 'data-vertex': v.id });
     }
   });
+  // 騎士（都市と騎士。頂点に小さな駒として置く。起動中は明るい色、休み中は暗い色）
+  if (g.players[0].knights) {
+    g.players.forEach((pl) => {
+      pl.knights.forEach((k) => {
+        const v = g.board.vertices[k.vertexId];
+        const x = v.x * SCALE, y = v.y * SCALE;
+        const color = k.active ? pl.color : I.tint(pl.color, -0.35);
+        I.add(S, I.ell(x, y, 10, 10), color, 1, '#1b1612', 1.6);
+        labels.push({ x, y: y + 1, t: String(k.level), f: '#fffaf0', s: 11, w: 700 });
+      });
+    });
+  }
 
   // 盗賊・海賊（点滅させるので、ほかの絵とは別の <g> に入れる）
   const robberShapes = [];
@@ -566,6 +587,14 @@ function renderBoardInto(svg, g, uiState) {
     g.board.hexes.forEach((hex) => {
       const isWater = hex.terrain === 'water';
       if (isWater ? hex.id === g.board.pirateHex || g.board.pirateHex == null : hex.id === g.board.robberHex) return;
+      const pts = hexPointsPx(g, hex).map(([x, y]) => `${x},${y}`).join(' ');
+      queue('polygon', { points: pts, class: 'hex-target', 'data-hex': hex.id });
+    });
+  }
+  // 発明家（進歩カード）: 数字チップのあるマスをどれでも2つ選べる
+  if (uiState && (uiState.mode === 'progressHexA' || uiState.mode === 'progressHexB')) {
+    g.board.hexes.forEach((hex) => {
+      if (hex.number == null || hex.id === uiState.data.hexA) return;
       const pts = hexPointsPx(g, hex).map(([x, y]) => `${x},${y}`).join(' ');
       queue('polygon', { points: pts, class: 'hex-target', 'data-hex': hex.id });
     });
@@ -642,7 +671,11 @@ function renderPlayers() {
 }
 
 function renderBank() {
-  els.bankPanel.innerHTML = `<div class="bank__head"><span>銀行</span><span>発展カード 残り ${game.bank.devDeck.length}</span></div>`;
+  const ck = !!game.bank.commodities;
+  const deckLabel = ck
+    ? `進歩カード 残り ${E.TRACKS.map((t) => game.progressDecks[t].length).reduce((a, b) => a + b, 0)}`
+    : `発展カード 残り ${game.bank.devDeck.length}`;
+  els.bankPanel.innerHTML = `<div class="bank__head"><span>銀行</span><span>${deckLabel}</span></div>`;
   const grid = document.createElement('div');
   grid.className = 'bank__grid';
   E.RESOURCES.forEach((r) => {
@@ -654,6 +687,17 @@ function renderBank() {
     cell.appendChild(b);
     grid.appendChild(cell);
   });
+  if (ck) {
+    E.COMMODITIES.forEach((c) => {
+      const cell = document.createElement('div');
+      cell.className = 'bank__res';
+      cell.appendChild(resIcon(c));
+      const b = document.createElement('b');
+      b.textContent = game.bank.commodities[c];
+      cell.appendChild(b);
+      grid.appendChild(cell);
+    });
+  }
   els.bankPanel.appendChild(grid);
 }
 
@@ -670,11 +714,72 @@ function renderHand() {
     cell.appendChild(b);
     els.handBar.appendChild(cell);
   });
-  const extra = document.createElement('div');
-  extra.className = 'hand__extra';
-  extra.textContent = `発展カード ${p.devCards.filter((c) => !c.played).length}枚`;
-  els.handBar.appendChild(extra);
+  if (!p.progressCards) { // 都市と騎士では発展カードを使わないので、この行は出さない
+    const extra = document.createElement('div');
+    extra.className = 'hand__extra';
+    extra.textContent = `発展カード ${p.devCards.filter((c) => !c.played).length}枚`;
+    els.handBar.appendChild(extra);
+  }
   els.handCount.textContent = `${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)} 枚`;
+}
+
+// ================================================================
+// 都市と騎士: サイドの要約（商品・都市の発展段階・騎士・蛮族の進み・事件のサイコロ）
+// ================================================================
+const EVENT_FACE_LABEL = { barbarian: '蛮族の船', trade: '交易の城門', politics: '政治の城門', science: '科学の城門' };
+function renderCk() {
+  if (!game.players[E.currentPlayer(game)].cityImprovements) { els.ckPanel.hidden = true; return; }
+  els.ckPanel.hidden = false;
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  els.ckPanel.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'panel__head';
+  head.innerHTML = `<span>都市と騎士</span><span>蛮族 ${game.barbarianProgress}/7${game.eventDie ? '・前回 ' + EVENT_FACE_LABEL[game.eventDie] : ''}</span>`;
+  els.ckPanel.appendChild(head);
+  const comRow = document.createElement('div');
+  comRow.className = 'ck-row';
+  E.COMMODITIES.forEach((c) => {
+    const cell = document.createElement('span');
+    cell.className = 'ck-chip';
+    cell.appendChild(resIcon(c));
+    const b = document.createElement('b'); b.textContent = `×${p.commodities[c]}`;
+    cell.appendChild(b);
+    comRow.appendChild(cell);
+  });
+  els.ckPanel.appendChild(comRow);
+  const trackRow = document.createElement('div');
+  trackRow.className = 'ck-row';
+  E.TRACKS.forEach((t) => {
+    const cell = document.createElement('span');
+    cell.className = 'ck-chip';
+    const star = game.metropolis[t] === idx ? '★' : '';
+    cell.textContent = `${E.TRACK_LABEL[t]} ${p.cityImprovements[t]}/5${star}`;
+    trackRow.appendChild(cell);
+  });
+  els.ckPanel.appendChild(trackRow);
+  const knightLine = document.createElement('div');
+  knightLine.className = 'ck-row';
+  if (p.knights.length) {
+    p.knights.forEach((k) => {
+      const cell = document.createElement('span');
+      cell.className = `ck-chip${k.active ? ' is-active' : ''}`;
+      cell.textContent = `${E.KNIGHT_LEVEL_LABEL[k.level]}${k.active ? '(起動)' : '(休み)'}`;
+      knightLine.appendChild(cell);
+    });
+  } else {
+    const cell = document.createElement('span');
+    cell.className = 'ck-chip';
+    cell.textContent = '騎士: まだいない';
+    knightLine.appendChild(cell);
+  }
+  els.ckPanel.appendChild(knightLine);
+  const manage = document.createElement('button');
+  manage.className = 'btn btn--small';
+  manage.textContent = '騎士を操作';
+  manage.disabled = !humansTurn() || !(game.phase === 'main' || game.phase === 'specialBuilding') || !p.knights.length;
+  manage.addEventListener('click', () => { ui = { mode: 'knightMenu', data: {} }; renderAll(); });
+  els.ckPanel.appendChild(manage);
 }
 
 function renderDice() {
@@ -708,6 +813,13 @@ function renderBanner() {
   else if (ui.mode === 'devKnightHex' || ui.mode === 'robberTargetForDev') hint = '盗賊か海賊を動かすタイルをタップ。';
   else if (ui.mode === 'devRoad1') hint = '街道建設: 1本目の道を置く場所をタップ。';
   else if (ui.mode === 'devRoad2') hint = '街道建設: 2本目の道を置く場所をタップ（終わってもよい）。';
+  else if (ui.mode === 'buildKnight') hint = '騎士を置く場所（自分の道が届く所）をタップ。';
+  else if (ui.mode === 'moveKnightTo') hint = '騎士を移す先の頂点をタップ。';
+  else if (ui.mode === 'progressVertex') hint = '騎士を置く場所をタップ。';
+  else if (ui.mode === 'progressEdge1') hint = '道を置く場所をタップ。';
+  else if (ui.mode === 'progressEdge2') hint = `道を置く場所をタップ（${(ui.data.edges || []).length}/2）。`;
+  else if (ui.mode === 'progressHexA') hint = '発明家: 1つめのマスをタップ。';
+  else if (ui.mode === 'progressHexB') hint = '発明家: 2つめのマスをタップ（数字チップを入れ替えます）。';
   els.hint.textContent = hint;
   const lastLog = game.log[game.log.length - 1];
   els.banner.innerHTML = `<div>${main}</div>` + (lastLog ? `<div class="message__log">ひとつ前: ${lastLog}</div>` : '');
@@ -733,12 +845,13 @@ function costRow(cost) {
 }
 function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (res[k] || 0) >= v); }
 
-const BUILD_MODE = { road: 'buildRoad', settlement: 'buildSettlement', city: 'buildCity', ship: 'buildShip' };
+const BUILD_MODE = { road: 'buildRoad', settlement: 'buildSettlement', city: 'buildCity', ship: 'buildShip', knight: 'buildKnight' };
 function renderBuildGrid() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
   const inMain = (game.phase === 'main' || game.phase === 'specialBuilding') && humansTurn();
   const seafarers = game.board.pirateHex != null;
+  const ck = !!p.cityImprovements;
   const defs = [
     { key: 'road', label: '道', cost: E.COSTS.road, ok: inMain && p.roads.length < 15 && canAfford(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length },
   ];
@@ -746,10 +859,19 @@ function renderBuildGrid() {
   defs.push(
     { key: 'settlement', label: '開拓地', cost: E.COSTS.settlement, ok: inMain && p.settlements.length < 5 && canAfford(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length },
     { key: 'city', label: '都市', cost: E.COSTS.city, ok: inMain && p.cities.length < 4 && canAfford(p.resources, E.COSTS.city) && E.availableCityVertices(game, idx).length },
-    { key: 'dev', label: '発展カード', cost: E.COSTS.dev, ok: inMain && game.bank.devDeck.length > 0 && canAfford(p.resources, E.COSTS.dev) },
   );
+  if (ck) {
+    defs.push(
+      { key: 'knight', label: '騎士', cost: E.KNIGHT_COST, ok: inMain && p.knights.length < E.MAX_KNIGHTS_PER_PLAYER && canAfford(p.resources, E.KNIGHT_COST) && E.availableKnightVertices(game, idx).length },
+      { key: 'wall', label: '都市壁', cost: E.WALL_COST, ok: false }, // クリックで即建てる（下のハンドラで特別扱い）
+      { key: 'improve', label: '都市の発展', cost: {}, ok: inMain && E.TRACKS.some((t) => E.canImproveCity(game, idx, t)) },
+    );
+  } else {
+    defs.push({ key: 'dev', label: '発展カード', cost: E.COSTS.dev, ok: inMain && game.bank.devDeck.length > 0 && canAfford(p.resources, E.COSTS.dev) });
+  }
   els.buildGrid.innerHTML = '';
   defs.forEach((d) => {
+    if (d.key === 'wall') d.ok = E.canBuildWall(game, idx);
     const btn = document.createElement('button');
     const active = ui.mode === BUILD_MODE[d.key];
     btn.className = `build-btn${active ? ' is-selected' : ''}`;
@@ -759,9 +881,11 @@ function renderBuildGrid() {
     label.className = 'build-btn__label';
     label.textContent = d.label;
     btn.appendChild(label);
-    btn.appendChild(costRow(d.cost));
+    if (d.key !== 'improve') btn.appendChild(costRow(d.cost));
     btn.addEventListener('click', () => {
       if (d.key === 'dev') { E.buyDevCard(game); playEvents(); persistAndRender(); return; }
+      if (d.key === 'wall') { E.buildWall(game); playEvents(); persistAndRender(); return; }
+      if (d.key === 'improve') { ui = { mode: 'cityImprove', data: {} }; renderAll(); return; }
       if (active) { ui = { mode: 'idle', data: {} }; renderAll(); return; }
       ui = { mode: BUILD_MODE[d.key], data: {} };
       renderAll();
@@ -816,6 +940,16 @@ function renderPanel() {
   if (ui.mode === 'devYearOfPlenty') { openPanel(); renderYearOfPlentyPanel(); return; }
   if (ui.mode === 'devMonopoly') { openPanel(); renderMonopolyPanel(); return; }
   if (ui.mode === 'devRoad2') { openPanel(); renderDevRoadFinish(); return; }
+  if (ui.mode === 'knightMenu') { openPanel(); renderKnightMenu(); return; }
+  if (ui.mode === 'knightExpelTarget') { openPanel(); renderKnightExpelPanel(); return; }
+  if (ui.mode === 'cityImprove') { openPanel(); renderCityImprovePanel(); return; }
+  if (ui.mode === 'progressMenu') { openPanel(); renderProgressMenu(); return; }
+  if (ui.mode === 'progressRes1') { openPanel(); renderProgressRes1Panel(); return; }
+  if (ui.mode === 'progressRes2') { openPanel(); renderProgressRes2Panel(); return; }
+  if (ui.mode === 'progressCom1') { openPanel(); renderProgressCom1Panel(); return; }
+  if (ui.mode === 'progressTrade1' || ui.mode === 'progressTrade2') { openPanel(); renderProgressTradePanel(); return; }
+  if (ui.mode === 'progressKnightOwn') { openPanel(); renderProgressKnightOwnPanel(); return; }
+  if (ui.mode === 'progressKnightTarget') { openPanel(); renderProgressKnightTargetPanel(); return; }
   if (game.winner != null) { openPanel(); renderWinPanel(); return; }
   closePanel();
 }
@@ -1075,6 +1209,192 @@ function renderDevRoadFinish() {
 }
 
 // ================================================================
+// 都市と騎士の窓（騎士を操作・都市の発展・進歩カード）
+// ================================================================
+function renderKnightMenu() {
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  const rows = p.knights.map((k) => `<div class="sheet__row">
+      <span>${E.KNIGHT_LEVEL_LABEL[k.level]}${k.active ? '（起動中）' : '（休み）'}</span>
+      <span>
+        <button class="ghost-btn" data-act="activate" data-k="${k.id}" ${E.canActivateKnight(game, idx, k.id) ? '' : 'disabled'}>起動</button>
+        <button class="ghost-btn" data-act="upgrade" data-k="${k.id}" ${E.canUpgradeKnight(game, idx, k.id) ? '' : 'disabled'}>昇格</button>
+        <button class="ghost-btn" data-act="move" data-k="${k.id}" ${E.movableKnightVertices(game, idx, k.id).length ? '' : 'disabled'}>移動</button>
+        <button class="ghost-btn" data-act="expel" data-k="${k.id}" ${E.expellableTargets(game, idx, k.id).length ? '' : 'disabled'}>追い出す</button>
+        <button class="ghost-btn" data-act="chase" data-k="${k.id}" ${E.canChaseRobber(game, idx, k.id) ? '' : 'disabled'}>盗賊払い</button>
+      </span>
+    </div>`).join('') || '<p>騎士はいません</p>';
+  els.panel.innerHTML = `<h2>騎士を操作</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
+  bindPanel({
+    activate: (b) => { E.activateKnight(game, Number(b.dataset.k)); playEvents(); persistAndRender(); },
+    upgrade: (b) => { E.upgradeKnight(game, Number(b.dataset.k)); playEvents(); persistAndRender(); },
+    move: (b) => { ui = { mode: 'moveKnightTo', data: { knightId: Number(b.dataset.k) } }; renderAll(); },
+    expel: (b) => { ui = { mode: 'knightExpelTarget', data: { knightId: Number(b.dataset.k) } }; renderAll(); },
+    chase: (b) => { E.chaseRobber(game, Number(b.dataset.k)); playEvents(); persistAndRender(); },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderKnightExpelPanel() {
+  const idx = E.currentPlayer(game);
+  const targets = E.expellableTargets(game, idx, ui.data.knightId);
+  const rows = targets.map((t, i) => {
+    const k = game.players[t.ownerIdx].knights.find((x) => x.id === t.knightId);
+    return `<button class="card-btn" data-act="pick" data-i="${i}">プレイヤー${t.ownerIdx + 1}の${E.KNIGHT_LEVEL_LABEL[k.level]}</button>`;
+  }).join('') || '<p>追い出せる騎士がいません</p>';
+  els.panel.innerHTML = `<h2>騎士を追い出す</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
+  bindPanel({
+    pick: (b) => {
+      const t = targets[Number(b.dataset.i)];
+      E.expelKnight(game, ui.data.knightId, t.ownerIdx, t.knightId);
+      ui = { mode: 'knightMenu', data: {} };
+      playEvents(); persistAndRender();
+    },
+    cancel: () => { ui = { mode: 'knightMenu', data: {} }; renderAll(); },
+  });
+}
+
+function renderCityImprovePanel() {
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  const rows = E.TRACKS.map((t) => {
+    const lv = p.cityImprovements[t];
+    const costText = lv < 5 ? `商品${E.cityImprovementCost(lv + 1)}枚（${E.COMMODITY_LABEL[E.TRACK_COMMODITY[t]]}）` : '最大';
+    const star = game.metropolis[t] === idx ? '★大都市' : '';
+    return `<div class="sheet__row"><span>${E.TRACK_LABEL[t]} ${lv}/5 ${star}</span><span>${costText}</span>
+      <button class="ghost-btn" data-act="up" data-t="${t}" ${E.canImproveCity(game, idx, t) ? '' : 'disabled'}>上げる</button></div>`;
+  }).join('');
+  els.panel.innerHTML = `<h2>都市の発展</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
+  bindPanel({
+    up: (b) => { E.improveCity(game, b.dataset.t); playEvents(); persistAndRender(); },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+
+// 使うと即座に終わる進歩カード（相手の選び・置き場所などが要らないもの）
+const PROGRESS_NO_PARAM = new Set(['tr_vp', 'po_vp', 'sc_vp', 'tr_bankgift', 'tr_cardsteal', 'po_cardsteal', 'sc_cardsteal', 'po_activateall', 'po_wallfree', 'sc_irrigation', 'sc_mining', 'sc_research']);
+const PROGRESS_PARAM_MODE = {
+  tr_resource1: 'progressRes1', sc_resource1: 'progressRes1', po_resource1: 'progressRes1',
+  tr_resource2: 'progressRes2', sc_resource2: 'progressRes2',
+  tr_commodity1: 'progressCom1', po_commodity1: 'progressCom1', sc_commodity1: 'progressCom1',
+  tr_stealres: 'progressRes1',
+  tr_trade21: 'progressTrade1', tr_trade21x2: 'progressTrade2',
+  tr_roadfree: 'progressEdge1', sc_roadfree2: 'progressEdge2',
+  po_knightfree: 'progressVertex',
+  po_upgradefree: 'progressKnightOwn',
+  po_deserter: 'progressKnightTarget', po_intrigue: 'progressKnightTarget',
+  sc_inventor: 'progressHexA',
+};
+function renderProgressMenu() {
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  const rows = p.progressCards.map((c, i) => `<div class="sheet__row"><span>${E.PROGRESS_LABEL[c.id]}</span>
+    <button class="ghost-btn" data-act="use" data-i="${i}">使う</button></div>`).join('') || '<p>持っていません</p>';
+  els.panel.innerHTML = `<h2>進歩カード（手札上限4）</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
+  bindPanel({
+    use: (b) => {
+      const i = Number(b.dataset.i);
+      const card = p.progressCards[i];
+      if (PROGRESS_NO_PARAM.has(card.id)) { E.playProgressCard(game, i, {}); playEvents(); persistAndRender(); return; }
+      const mode = PROGRESS_PARAM_MODE[card.id];
+      if (!mode) return;
+      ui = { mode, data: { cardIdx: i, picked: [], edges: [], trades: [], pendingGive: null } };
+      renderAll();
+    },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderProgressRes1Panel() {
+  els.panel.innerHTML = '<h2>資源を1つ選ぶ</h2><div class="res-pick" data-row="pick"></div><button class="ghost-btn" data-act="cancel">やめる</button>';
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'pick');
+  bindPanel({
+    pick: (b) => { E.playProgressCard(game, ui.data.cardIdx, { res: b.dataset.res }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderProgressRes2Panel() {
+  const picked = ui.data.picked;
+  els.panel.innerHTML = `<h2>資源を2つ選ぶ（${picked.length}/2）</h2><div class="res-pick" data-row="pick"></div>
+    <p>選んだ: ${picked.length ? '' : 'なし'}</p>
+    <button class="btn btn--accent" data-act="confirm" ${picked.length === 2 ? '' : 'disabled'}>受け取る</button>
+    <button class="ghost-btn" data-act="cancel">やめる</button>`;
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'pick');
+  const p = els.panel.querySelector('p');
+  picked.forEach((r) => p.appendChild(resIcon(r)));
+  bindPanel({
+    pick: (b) => { if (picked.length < 2) { picked.push(b.dataset.res); renderPanel(); } },
+    confirm: () => { E.playProgressCard(game, ui.data.cardIdx, { res: picked }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderProgressCom1Panel() {
+  els.panel.innerHTML = '<h2>商品を1つ選ぶ</h2><div class="res-pick" data-row="pick"></div><button class="ghost-btn" data-act="cancel">やめる</button>';
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.COMMODITIES, () => false, (c, b) => b.appendChild(resIcon(c)), 'pick');
+  bindPanel({
+    pick: (b) => { E.playProgressCard(game, ui.data.cardIdx, { com: b.dataset.res }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderProgressTradePanel() {
+  const times = ui.mode === 'progressTrade2' ? 2 : 1;
+  const trades = ui.data.trades;
+  const giving = ui.data.pendingGive;
+  els.panel.innerHTML = giving == null
+    ? `<h2>2:1で渡す資源を選ぶ（${trades.length + 1}/${times}）</h2><div class="res-pick" data-row="give"></div><button class="ghost-btn" data-act="cancel">やめる</button>`
+    : '<h2>もらう資源を選ぶ</h2><div class="res-pick" data-row="want"></div><button class="ghost-btn" data-act="cancel">やめる</button>';
+  if (giving == null) {
+    fillResPick(els.panel.querySelector('[data-row="give"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'give');
+  } else {
+    fillResPick(els.panel.querySelector('[data-row="want"]'), E.RESOURCES.filter((r) => r !== giving), () => false, (r, b) => b.appendChild(resIcon(r)), 'want');
+  }
+  bindPanel({
+    give: (b) => { ui.data.pendingGive = b.dataset.res; renderPanel(); },
+    want: (b) => {
+      trades.push([ui.data.pendingGive, b.dataset.res]);
+      ui.data.pendingGive = null;
+      if (trades.length >= times) { E.playProgressCard(game, ui.data.cardIdx, { trades }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } else renderPanel();
+    },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderProgressKnightOwnPanel() {
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  const list = p.knights.filter((k) => k.level < 3 && !(k.level === 2 && (p.cityImprovements.politics || 0) < 3));
+  const rows = list.map((k) => `<button class="card-btn" data-act="pick" data-k="${k.id}">${E.KNIGHT_LEVEL_LABEL[k.level]} → ${E.KNIGHT_LEVEL_LABEL[k.level + 1]}</button>`).join('') || '<p>昇格できる騎士がいません</p>';
+  els.panel.innerHTML = `<h2>騎士を1体、只で昇格</h2>${rows}<button class="ghost-btn" data-act="cancel">やめる</button>`;
+  bindPanel({
+    pick: (b) => { E.playProgressCard(game, ui.data.cardIdx, { knightId: Number(b.dataset.k) }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+function renderProgressKnightTargetPanel() {
+  const idx = E.currentPlayer(game);
+  const card = game.players[idx].progressCards[ui.data.cardIdx];
+  const isIntrigue = card.id === 'po_intrigue';
+  const list = [];
+  game.players.forEach((op, oi) => {
+    if (oi === idx) return;
+    op.knights.forEach((k) => {
+      if (isIntrigue) {
+        const near = game.players[idx].knights.some((mk) => game.board.vertices[mk.vertexId].neighbors.includes(k.vertexId));
+        if (!near) return;
+      }
+      list.push({ ownerIdx: oi, knightId: k.id, level: k.level });
+    });
+  });
+  const rows = list.map((t, i) => `<button class="card-btn" data-act="pick" data-i="${i}">プレイヤー${t.ownerIdx + 1}の${E.KNIGHT_LEVEL_LABEL[t.level]}</button>`).join('') || '<p>対象がいません</p>';
+  els.panel.innerHTML = `<h2>${E.PROGRESS_LABEL[card.id]}</h2>${rows}<button class="ghost-btn" data-act="cancel">やめる</button>`;
+  bindPanel({
+    pick: (b) => {
+      const t = list[Number(b.dataset.i)];
+      E.playProgressCard(game, ui.data.cardIdx, { ownerIdx: t.ownerIdx, knightId: t.knightId });
+      ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender();
+    },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
+
+// ================================================================
 // 操作ボタン
 // ================================================================
 // CPU の手番・捨て札の最中は、盤やボタンを人が触っても動かない（CPUの手として誤って進んでしまうのを防ぐ）
@@ -1091,7 +1411,14 @@ function renderActionBar() {
   els.diceBtn.disabled = !rollable || rolling;
   els.tradeBtn.disabled = !buildable || inSBP;
   els.devBtn.disabled = !buildable || inSBP;
-  { const n = game.players[E.currentPlayer(game)].devCards.filter((c) => !c.played).length; els.devBtn.textContent = `発展カード${n ? ` ${n}` : ''}`; }
+  const ckPlayer = game.players[E.currentPlayer(game)];
+  if (ckPlayer.progressCards) {
+    const n = ckPlayer.progressCards.length;
+    els.devBtn.textContent = `進歩カード${n ? ` ${n}` : ''}`;
+  } else {
+    const n = ckPlayer.devCards.filter((c) => !c.played).length;
+    els.devBtn.textContent = `発展カード${n ? ` ${n}` : ''}`;
+  }
   els.endTurnBtn.disabled = !buildable;
   els.endTurnBtn.textContent = inSBP ? 'パス' : '手番を終える';
 }
@@ -1121,7 +1448,12 @@ els.diceBtn.addEventListener('click', () => {
   spin();
 });
 els.tradeBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'tradeMenu', data: {} }; renderAll(); });
-els.devBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'devMenu', data: {} }; renderAll(); });
+els.devBtn.addEventListener('click', () => {
+  if (!humansTurn()) return;
+  const p = game.players[E.currentPlayer(game)];
+  ui = { mode: p.progressCards ? 'progressMenu' : 'devMenu', data: {} };
+  renderAll();
+});
 els.endTurnBtn.addEventListener('click', () => {
   if (!humansTurn()) return;
   if (game.phase === 'specialBuilding') E.passSpecialBuild(game); else E.endTurn(game);
@@ -1146,6 +1478,15 @@ function onVertexTap(vid) {
   if (ui.mode === 'setupSettlement') { E.setupPlaceSettlement(game, vid); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
   if (ui.mode === 'buildSettlement') { if (E.buildSettlement(game, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'buildCity') { if (E.buildCity(game, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildKnight') { if (E.buildKnight(game, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'moveKnightTo') {
+    if (E.moveKnight(game, ui.data.knightId, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    return;
+  }
+  if (ui.mode === 'progressVertex') {
+    if (E.playProgressCard(game, ui.data.cardIdx, { vertex: vid })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    return;
+  }
 }
 function onEdgeTap(eid) {
   if (ui.mode === 'setupRoad') { E.setupPlaceRoad(game, eid); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
@@ -1158,6 +1499,18 @@ function onEdgeTap(eid) {
   }
   if (ui.mode === 'moveShip2') { if (E.moveShip(game, ui.data.from, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'devRoad1' || ui.mode === 'devRoad2') { onDevRoadEdgeTap(eid); return; }
+  if (ui.mode === 'progressEdge1') {
+    if (!E.canPlaceRoad(game, eid, E.currentPlayer(game))) return;
+    if (E.playProgressCard(game, ui.data.cardIdx, { edge: eid })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    return;
+  }
+  if (ui.mode === 'progressEdge2') {
+    if (!E.canPlaceRoad(game, eid, E.currentPlayer(game)) || ui.data.edges.includes(eid)) return;
+    ui.data.edges.push(eid);
+    if (ui.data.edges.length >= 2) {
+      if (E.playProgressCard(game, ui.data.cardIdx, { edges: ui.data.edges })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    } else renderAll();
+  }
 }
 // 街道建設: 道だけに置ける／船だけに置けるならそのまま進む。どちらも置ける辺（海沿い）なら窓で選ばせる。
 function onDevRoadEdgeTap(eid) {
@@ -1197,6 +1550,16 @@ function onHexTap(hid) {
     const targets = E.banditTargets(game, hid, idx);
     if (targets.length > 1) { ui.data.pendingHex = hid; ui.data.forDev = ui.data.cardIdx; renderAll(); }
     else { E.playKnight(game, ui.data.cardIdx, hid, targets[0] ?? null); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    return;
+  }
+  if (ui.mode === 'progressHexA') {
+    if (game.board.hexes[hid].number == null) return;
+    ui.data.hexA = hid; ui.mode = 'progressHexB'; renderAll();
+    return;
+  }
+  if (ui.mode === 'progressHexB') {
+    if (game.board.hexes[hid].number == null || hid === ui.data.hexA) return;
+    if (E.playProgressCard(game, ui.data.cardIdx, { hexA: ui.data.hexA, hexB: hid })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
   }
 }
 
@@ -1216,6 +1579,7 @@ function renderAll() {
   renderPlayers();
   renderBank();
   renderHand();
+  renderCk();
   renderBuildGrid();
   renderBanner();
   renderActionBar();

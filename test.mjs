@@ -422,6 +422,165 @@ test('航海者版: CPUだけで4人、1局を最後まで決着できる（数�
   }
 });
 
+// ---- 都市と騎士 ----
+function ckGame(count = 4) { return E.createGame(count, Math.random, { expansions: ['cities-knights'] }); }
+
+test('都市と騎士: 都市の商品産出（森→紙、牧草→布、山→硬貨。畑・丘は資源2のまま）', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 0;
+  const forestHex = g.board.hexes.find((h) => h.terrain === 'forest');
+  const fieldHex = g.board.hexes.find((h) => h.terrain === 'field');
+  // 2つの都市のどちらも、もう一方のマスに接してしまわないよう、互いの頂点を共有しない組み合わせを選ぶ
+  const vForest = forestHex.vertexIds.find((v) => !fieldHex.vertexIds.includes(v));
+  const vField = fieldHex.vertexIds.find((v) => !forestHex.vertexIds.includes(v));
+  g.board.vertices[vForest].building = { owner: 0, type: 'city' };
+  g.players[0].cities.push(vForest);
+  g.board.vertices[vField].building = { owner: 0, type: 'city' };
+  g.players[0].cities.push(vField);
+  // ほかのマスが偶然9を持っていると資源が混ざるので、的にする2マス以外は9を避けておく
+  g.board.hexes.forEach((h) => { if (h.id !== forestHex.id && h.id !== fieldHex.id && h.number === 9) h.number = 2; });
+  forestHex.number = 9; fieldHex.number = 9;
+  g.phase = 'roll';
+  const seq = [3 / 6, 4 / 6, 0.99]; // d1=4, d2=5 → 合計9。3つ目はイベントダイス用
+  const total = E.rollDice(g, () => seq.shift());
+  assert.equal(total, 9);
+  assert.equal(g.players[0].resources.wood, 1); // 森の都市: 資源1
+  assert.equal(g.players[0].commodities.paper, 1); // +商品1
+  assert.equal(g.players[0].resources.wheat, 2); // 畑の都市: 資源2のまま（商品は産まない）
+});
+
+test('都市と騎士: 都市の発展（商品を払って段階を上げる・大都市の奪い合い）', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0], p1 = g.players[1];
+  const v0 = g.board.vertices.find((v) => !v.building);
+  v0.building = { owner: 0, type: 'city' }; p0.cities.push(v0.id);
+  assert.equal(E.canImproveCity(g, 0, 'trade'), false); // 商品がない
+  p0.commodities.cloth = 1;
+  assert.ok(E.improveCity(g, 'trade'));
+  assert.equal(p0.cityImprovements.trade, 1);
+  assert.equal(p0.commodities.cloth, 0);
+  p0.commodities.cloth = 2 + 3; // 2段階目(2)+3段階目(3)
+  assert.ok(E.improveCity(g, 'trade'));
+  assert.ok(E.improveCity(g, 'trade'));
+  assert.equal(p0.cityImprovements.trade, 3);
+  p0.commodities.cloth = 4;
+  assert.ok(E.improveCity(g, 'trade')); // 4段階目=大都市
+  assert.equal(g.metropolis.trade, 0);
+  assert.equal(E.playerScore(g, 0), 2 /* city */ + 2 /* metropolis */);
+  // プレイヤー1が追い越すと大都市を奪う
+  const v1 = g.board.vertices.find((v) => !v.building);
+  v1.building = { owner: 1, type: 'city' }; p1.cities.push(v1.id);
+  g.turn = 1;
+  p1.commodities.cloth = 1 + 2 + 3 + 4 + 5;
+  for (let i = 0; i < 5; i++) E.improveCity(g, 'trade');
+  assert.equal(p1.cityImprovements.trade, 5);
+  assert.equal(g.metropolis.trade, 1); // 5段階目に追い越されたので奪われる
+  // 5段階目の持ち主からはもう奪えない
+  g.turn = 0;
+  assert.equal(E.canImproveCity(g, 0, 'trade'), false); // すでに3段階目、商品がない
+});
+
+test('都市と騎士: 騎士の起動・昇格・移動・追い出し・盗賊を追い払う', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0], p1 = g.players[1];
+  const v = g.board.vertices.find((x) => x.edgeIds.length >= 2);
+  v.building = { owner: 0, type: 'settlement' }; p0.settlements.push(v.id);
+  const roadEdge = v.edgeIds[0];
+  g.board.edges[roadEdge].road = 0; p0.roads.push(roadEdge);
+  const otherEnd = g.board.edges[roadEdge].v1 === v.id ? g.board.edges[roadEdge].v2 : g.board.edges[roadEdge].v1;
+  p0.resources = { wood: 0, brick: 0, sheep: 5, wheat: 5, ore: 5 };
+  assert.ok(E.canPlaceKnight(g, otherEnd, 0));
+  assert.ok(E.buildKnight(g, otherEnd));
+  const kid = p0.knights[0].id;
+  assert.equal(E.canActivateKnight(g, 0, kid), true);
+  assert.ok(E.activateKnight(g, kid));
+  assert.ok(E.upgradeKnight(g, kid));
+  assert.equal(p0.knights[0].level, 2);
+  assert.equal(E.canUpgradeKnight(g, 0, kid), false); // 最強にするには政治3段階目以上が要る
+  p0.cityImprovements.politics = 3;
+  assert.ok(E.upgradeKnight(g, kid));
+  assert.equal(p0.knights[0].level, 3);
+  // 移動
+  const moveTargets = E.movableKnightVertices(g, 0, kid);
+  assert.ok(moveTargets.length >= 0);
+  // 盗賊を追い払う: 騎士の頂点が盗賊のマスに接するようにする
+  const robberHexId = g.board.robberHex;
+  const robberVid = g.board.hexes[robberHexId].vertexIds[0];
+  p0.knights[0].vertexId = robberVid;
+  p0.knights[0].actedTurn = null;
+  assert.ok(E.canChaseRobber(g, 0, kid));
+  assert.ok(E.chaseRobber(g, kid));
+  assert.equal(g.board.hexes[g.board.robberHex].terrain, 'desert');
+  assert.equal(p0.knights[0].active, false);
+  // 追い出し: プレイヤー1の弱い騎士を、プレイヤー0の起動した騎士の隣に置いて追い出す
+  const neighborV = g.board.vertices[robberVid].neighbors[0];
+  p1.knights.push({ id: 1, vertexId: neighborV, level: 1, active: true, actedTurn: null });
+  p0.knights[0].active = true; p0.knights[0].actedTurn = null;
+  const targets = E.expellableTargets(g, 0, kid);
+  assert.ok(targets.some((t) => t.ownerIdx === 1));
+  assert.ok(E.expelKnight(g, kid, 1, 1));
+  assert.equal(p1.knights.length, 0);
+});
+
+test('都市と騎士: 蛮族の襲来（勝つと守護者点、負けると都市が1つ開拓地に戻る）', () => {
+  const g = ckGame();
+  const p0 = g.players[0], p1 = g.players[1];
+  const v0 = g.board.vertices.find((v) => !v.building);
+  v0.building = { owner: 0, type: 'city' }; p0.cities.push(v0.id);
+  const v1 = g.board.vertices.find((v) => !v.building);
+  v1.building = { owner: 1, type: 'city' }; p1.cities.push(v1.id);
+  p0.knights.push({ id: 1, vertexId: v0.id, level: 3, active: true, actedTurn: null }); // 強さ3 >= 都市2 → 勝つ
+  g.barbarianProgress = 6; g.phase = 'roll'; g.turn = 0;
+  E.rollDice(g, () => 0.1); // 1面目=barbarianを引かせるため小さい乱数を使う（EVENT_FACESの並び順に依存）
+  assert.equal(g.barbarianAttacked, true);
+  assert.equal(g.barbarianProgress, 0);
+  assert.equal(p0.defenderVp, 1);
+  assert.equal(p0.knights[0].active, false); // 襲来のあとは全員休む
+
+  // 次は負けるケース: 騎士なし
+  const g2 = ckGame();
+  const q0 = g2.players[0];
+  const vv = g2.board.vertices.find((v) => !v.building);
+  vv.building = { owner: 0, type: 'city' }; q0.cities.push(vv.id);
+  g2.barbarianProgress = 6; g2.phase = 'roll'; g2.turn = 0;
+  E.rollDice(g2, () => 0.1);
+  assert.equal(g2.barbarianAttacked, true);
+  assert.equal(q0.cities.length, 0);
+  assert.equal(q0.settlements.includes(vv.id), true);
+});
+
+test('都市と騎士: 都市壁は土2、都市1つに1つ、最大3。7の捨て札の上限を+2する', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0];
+  const v0 = g.board.vertices.find((v) => !v.building);
+  v0.building = { owner: 0, type: 'city' }; p0.cities.push(v0.id);
+  p0.resources.brick = 2;
+  assert.equal(E.canBuildWall(g, 0), true);
+  assert.ok(E.buildWall(g));
+  assert.equal(p0.walls, 1);
+  assert.equal(E.canBuildWall(g, 0), false); // 都市が1つしかないので、もう置けない
+  // 7が出たとき、壁1つぶん(+2)で9枚までは捨てずに済む
+  g.players.forEach((p) => { p.resources = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 }; });
+  p0.resources.wood = 9;
+  g.phase = 'roll';
+  const seq = [3 / 6, 2.5 / 6, 0.99]; // d1=4, d2=3 → 合計7
+  const total = E.rollDice(g, () => seq.shift());
+  assert.equal(total, 7);
+  assert.equal(g.pendingDiscards.some((d) => d.player === 0), false); // 7+2=9までは捨てなくてよい
+});
+
+test('都市と騎士: CPUだけで4人、数局きちんと決着する（勝利点13点）', () => {
+  for (let i = 0; i < 4; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['cities-knights'] });
+    assert.deepEqual(g.expansions, ['cities-knights']);
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= 13);
+  }
+});
+
 test('CPU: 強さの差（よわい vs ふつう、ふつう vs つよい）を4人（2対2）対局の勝ち数で見る', () => {
   // 実際のアプリは3〜4人用なので、比較も4人（levelA2人 + levelB2人、席はランダム）で行う
   function winRate(levelA, levelB, games) {
