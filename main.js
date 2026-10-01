@@ -394,8 +394,11 @@ function renderBoardInto(svg, g, uiState) {
     const type = v1.port;
     const isAny = type === '3:1';
     const bg = isAny ? '#f6eedb' : RES_COLOR[type];
-    I.add(S, I.line(mx, my, px, py), 'none', 1, '#6e5436', 7);
-    I.add(S, I.line(mx, my, px, py), 'none', 1, '#9a7a52', 3);
+    // 実物と同じく、使える2つの角それぞれから桟橋を出す
+    [v1, v2].forEach((v) => {
+      I.add(S, I.line(v.x * SCALE, v.y * SCALE, px, py), 'none', 1, '#6e5436', 7);
+      I.add(S, I.line(v.x * SCALE, v.y * SCALE, px, py), 'none', 1, '#9a7a52', 3);
+    });
     I.add(S, I.ell(px, py + 2, 18, 18), '#000', 0.25);
     I.add(S, I.ell(px, py, 18, 18), '#f6eedb', 1, isAny ? '#b9a980' : bg, 3);
     labels.push({ x: px, y: isAny ? py : py - 4, t: isAny ? '3:1' : '2:1', f: '#2a211b', s: 13, w: 700 });
