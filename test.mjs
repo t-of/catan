@@ -190,6 +190,8 @@ test('5〜6人拡張: 自動で30マス・80頂点・109辺・地形/数字チ�
       assert.deepEqual(devCounts, { knight: 20, vp: 5, roadBuilding: 3, yearOfPlenty: 3, monopoly: 3 });
     }
   }
+  // 画面からは expansions: [] で来る。それでも5〜6人なら30マスの盤になる
+  for (const n of [5, 6]) assert.equal(E.createGame(n, Math.random, { expansions: [] }).board.hexes.length, 30);
   // 3〜4人は今までどおり拡張なし
   assert.deepEqual(E.createGame(4, Math.random).expansions, []);
 });

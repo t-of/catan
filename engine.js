@@ -448,7 +448,8 @@ function barbarianTargetHexes(board) { return board.hexes.filter((h) => h.id !==
 // 航海者版・都市と騎士・交易と略奪を足すときも、ここに名前を増やしていく。
 // ================================================================
 export function createGame(playerCount, rng = Math.random, options = {}) {
-  const expansions = options.expansions || (playerCount >= 5 ? ['5-6player'] : []);
+  const expansions = (options.expansions || []).slice();
+  if (playerCount >= 5 && !expansions.includes('5-6player')) expansions.push('5-6player');
   const ext = expansions.includes('5-6player');
   const seafarers = expansions.includes('seafarers');
   const ck = expansions.includes('cities-knights'); // 都市と騎士。3〜4人・基本盤だけで使う想定（航海者版・5〜6人との組み合わせは作っていない）
