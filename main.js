@@ -308,8 +308,8 @@ function renderBoardInto(svg, g, uiState) {
     I.add(S, I.line(mx, my, px, py), 'none', 1, '#9a7a52', 3);
     I.add(S, I.ell(px, py + 2, 18, 18), '#000', 0.25);
     I.add(S, I.ell(px, py, 18, 18), '#f6eedb', 1, isAny ? '#b9a980' : bg, 3);
-    labels.push({ x: px, y: isAny ? py + 5 : py + 1, t: isAny ? '3:1' : '2:1', f: '#2a211b', s: 13, w: 700 });
-    if (!isAny) labels.push({ x: px, y: py + 13, t: RES_LABEL[type], f: bg, s: 10, w: 700 });
+    labels.push({ x: px, y: isAny ? py : py - 4, t: isAny ? '3:1' : '2:1', f: '#2a211b', s: 13, w: 700 });
+    if (!isAny) labels.push({ x: px, y: py + 8, t: RES_LABEL[type], f: bg, s: 10, w: 700 });
   });
 
   // 道（既存＋置ける場所）
