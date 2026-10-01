@@ -286,11 +286,11 @@ function renderBoardInto(svg, g, uiState) {
     I.terrainDecor(S, hex.terrain, cx, cy);
     if (hex.number != null) {
       const hot = hex.number === 6 || hex.number === 8;
-      I.add(S, I.ell(cx + 1, cy + 8, 19, 19), '#000', 0.28);
-      I.add(S, I.ell(cx, cy + 5, 18, 18), `url(#${svg.id}-g-token)`, 1, '#c7b58b', 1.2);
-      labels.push({ x: cx, y: cy + 11, t: String(hex.number), f: hot ? '#b8321f' : '#2a211b', s: hot ? 21 : 19, w: 700 });
+      I.add(S, I.ell(cx + 1, cy + 3, 19, 19), '#000', 0.28);
+      I.add(S, I.ell(cx, cy, 18, 18), `url(#${svg.id}-g-token)`, 1, '#c7b58b', 1.2);
+      labels.push({ x: cx, y: cy - 3, t: String(hex.number), f: hot ? '#b8321f' : '#2a211b', s: hot ? 21 : 19, w: 700 });
       const dots = 6 - Math.abs(7 - hex.number);
-      for (let d = 0; d < dots; d++) I.add(S, I.ell(cx - (dots - 1) * 2.4 + d * 4.8, cy + 17, 1.3, 1.3), hot ? '#b8321f' : '#2a211b');
+      for (let d = 0; d < dots; d++) I.add(S, I.ell(cx - (dots - 1) * 2.4 + d * 4.8, cy + 10, 1.3, 1.3), hot ? '#b8321f' : '#2a211b');
     }
   });
 
