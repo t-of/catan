@@ -109,7 +109,7 @@ export function discardFor(game, playerIdx, level) {
   return E.discardCards(game, playerIdx, obj);
 }
 
-// ---- 盗賊（CPU は盗賊だけ動かす。海賊を動かすのは人だけの操作 — ponytail: 複雑さを抑えるための簡略化） ----
+// ---- 盗賊・海賊 ----
 function chooseRobberHex(game, idx, level) {
   const hexes = game.board.hexes.filter((h) => h.id !== game.board.robberHex && h.terrain !== 'water');
   if (level === 'weak') return pick(hexes).id;
@@ -136,20 +136,60 @@ function chooseRobberTarget(game, idx, hexId, level) {
   if (level === 'strong') return targets.reduce((best, t) => (E.playerScore(game, t) > E.playerScore(game, best) ? t : best));
   return pick(targets);
 }
+// 海賊（航海者版）を動かす先。隣に自分以外の船がある海マスだけが対象になりうる。
+function choosePirateHex(game, idx, level) {
+  if (game.board.pirateHex == null) return null;
+  const hexes = game.board.hexes.filter((h) => h.id !== game.board.pirateHex && h.terrain === 'water');
+  const scored = hexes.map((h) => {
+    const targets = E.pirateTargets(game, h.id, idx);
+    if (!targets.length) return { h, score: -1 };
+    const best = level === 'strong' ? targets.reduce((b, t) => (E.playerScore(game, t) > E.playerScore(game, b) ? t : b)) : targets[0];
+    return { h, score: E.playerScore(game, best) };
+  }).filter((s) => s.score >= 0);
+  if (!scored.length) return null;
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].h.id;
+}
+function choosePirateTarget(game, idx, hexId, level) {
+  const targets = E.pirateTargets(game, hexId, idx);
+  if (!targets.length) return null;
+  if (level === 'strong') return targets.reduce((best, t) => (E.playerScore(game, t) > E.playerScore(game, best) ? t : best));
+  return pick(targets);
+}
+// 盗賊・海賊のどちらを動かすか選ぶ（ふつう・つよいだけ。よわいは盗賊だけ動かす簡略化のまま）。
+// 「得なとき」= 海賊で奪える相手のほうが、盗賊で奪える相手より得点が高いとき。
+function chooseBandit(game, idx, level) {
+  const landHex = chooseRobberHex(game, idx, level);
+  const landTarget = chooseRobberTarget(game, idx, landHex, level);
+  if (game.board.pirateHex == null || level === 'weak') return { hexId: landHex, target: landTarget, water: false };
+  const seaHex = choosePirateHex(game, idx, level);
+  if (seaHex == null) return { hexId: landHex, target: landTarget, water: false };
+  const seaTarget = choosePirateTarget(game, idx, seaHex, level);
+  const landScore = landTarget != null ? E.playerScore(game, landTarget) : -1;
+  const seaScore = seaTarget != null ? E.playerScore(game, seaTarget) : -1;
+  if (seaScore > landScore) return { hexId: seaHex, target: seaTarget, water: true };
+  return { hexId: landHex, target: landTarget, water: false };
+}
 
 // ---- 発展カード（よわい用: ランダムに1枚使う） ----
 function playableDev(game, c) { return !game.devCardPlayedThisTurn && !c.played && c.type !== 'vp' && c.boughtTurn !== game.turnNumber; }
 function playRandomDev(game, idx, entries) {
   const { c, i } = pick(entries);
   if (c.type === 'knight') {
-    const hex = chooseRobberHex(game, idx, 'weak');
-    const target = chooseRobberTarget(game, idx, hex, 'weak');
-    return E.playKnight(game, i, hex, target);
+    const { hexId, target } = chooseBandit(game, idx, 'weak');
+    return E.playKnight(game, i, hexId, target);
   }
-  if (c.type === 'roadBuilding') return E.playRoadBuilding(game, i, E.availableRoadEdges(game, idx).slice(0, 2));
+  if (c.type === 'roadBuilding') return E.playRoadBuilding(game, i, pickRoadBuildingItems(game, idx, 'weak'));
   if (c.type === 'yearOfPlenty') return E.playYearOfPlenty(game, i, pick(E.RESOURCES), pick(E.RESOURCES));
   if (c.type === 'monopoly') return E.playMonopoly(game, i, pick(E.RESOURCES));
   return false;
+}
+
+// 街道建設: 道・船どちらも候補に入れ、一番値打ちのある2つを選ぶ（航海者版でなければ船は常に空）。
+function pickRoadBuildingItems(game, idx, level) {
+  const roads = E.availableRoadEdges(game, idx).map((e) => ({ item: e, s: roadValue(game, e, idx, level) }));
+  const ships = E.availableShipEdges(game, idx).map((e) => ({ item: { id: e, kind: 'ship' }, s: roadValue(game, e, idx, level) }));
+  return roads.concat(ships).sort((a, b) => b.s - a.s).slice(0, 2).map((x) => x.item);
 }
 
 // 持っている資源で成立する銀行・港との交易（give, want の組）をすべて挙げる
@@ -308,11 +348,8 @@ function strongStep(game, idx) {
   const p = game.players[idx];
   const rb = p.devCards.findIndex((c) => c.type === 'roadBuilding' && playableDev(game, c));
   if (rb >= 0) {
-    const edges = E.availableRoadEdges(game, idx);
-    if (edges.length) {
-      const picks = edges.map((e) => ({ e, s: roadValue(game, e, idx, 'strong') })).sort((a, b) => b.s - a.s).slice(0, 2).map((x) => x.e);
-      return E.playRoadBuilding(game, rb, picks);
-    }
+    const picks = pickRoadBuildingItems(game, idx, 'strong');
+    if (picks.length) return E.playRoadBuilding(game, rb, picks);
   }
   const yop = p.devCards.findIndex((c) => c.type === 'yearOfPlenty' && playableDev(game, c));
   if (yop >= 0) {
@@ -327,9 +364,8 @@ function strongStep(game, idx) {
   }
   const knight = p.devCards.findIndex((c) => c.type === 'knight' && playableDev(game, c));
   if (knight >= 0 && shouldPlayKnight(game, idx)) {
-    const hex = chooseRobberHex(game, idx, 'strong');
-    const target = chooseRobberTarget(game, idx, hex, 'strong');
-    return E.playKnight(game, knight, hex, target);
+    const { hexId, target } = chooseBandit(game, idx, 'strong');
+    return E.playKnight(game, knight, hexId, target);
   }
   if (tryHelpfulTrade(game, idx)) return true;
   return false;
@@ -386,9 +422,8 @@ export function step(game, level = 'normal') {
   if (phase === 'roll') { E.rollDice(game, Math.random); return true; }
   if (phase === 'moveRobber') {
     const idx = E.currentPlayer(game);
-    const hex = chooseRobberHex(game, idx, level);
-    const target = chooseRobberTarget(game, idx, hex, level);
-    return E.moveRobber(game, hex, target);
+    const { hexId, target } = chooseBandit(game, idx, level);
+    return E.moveRobber(game, hexId, target);
   }
   if (phase === 'specialBuilding') return specialBuildStep(game, level);
   if (phase === 'main') return mainStep(game, E.currentPlayer(game), level);

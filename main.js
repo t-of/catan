@@ -604,6 +604,9 @@ function edgeChoices() {
   // それ以外の道は E.availableRoadEdges だと「前から持っている開拓地」にもつながってしまい、選べるのに置けなくなる。
   if (isSetup) return game.board.vertices[game.setupLastVertex].edgeIds.filter((eId) => game.board.edges[eId].road == null);
   if (ui.mode === 'buildShip') return E.availableShipEdges(game, idx);
+  if ((ui.mode === 'devRoad1' || ui.mode === 'devRoad2') && game.board.pirateHex != null) {
+    return [...new Set([...E.availableRoadEdges(game, idx), ...E.availableShipEdges(game, idx)])];
+  }
   return E.availableRoadEdges(game, idx);
 }
 
@@ -807,6 +810,7 @@ function renderPanel() {
     return;
   }
   if (ui.data.pendingHex != null) { openPanel(); renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev); return; }
+  if (ui.data.pendingEdge != null) { openPanel(); renderDevRoadKindPanel(ui.data.pendingEdge); return; }
   if (ui.mode === 'tradeMenu') { openPanel(); renderTradeMenu(); return; }
   if (ui.mode === 'devMenu') { openPanel(); renderDevMenu(); return; }
   if (ui.mode === 'devYearOfPlenty') { openPanel(); renderYearOfPlentyPanel(); return; }
@@ -1046,6 +1050,19 @@ function renderMonopolyPanel() {
   });
 }
 
+// 街道建設: 道・船どちらにも置ける辺をタップしたとき、どちらにするか選ばせる窓
+function renderDevRoadKindPanel(eid) {
+  els.panel.innerHTML = `<h2>街道建設</h2><p class="sheet__row">道にしますか、船にしますか。</p>
+    <button class="btn btn--accent" data-act="road">道にする</button>
+    <button class="btn btn--accent" data-act="ship">船にする</button>
+    <button class="ghost-btn" data-act="cancel">やめる</button>`;
+  bindPanel({
+    road: () => resolveDevRoadPick(eid, 'road'),
+    ship: () => resolveDevRoadPick(eid, 'ship'),
+    cancel: () => { ui.data.pendingEdge = null; renderAll(); },
+  });
+}
+
 // devRoad2 で「終わってもよい」を押せるように
 function renderDevRoadFinish() {
   els.panel.innerHTML = `<h2>街道建設</h2><p class="sheet__row">2本目の道を置くか、ここで終わってください。</p>
@@ -1140,9 +1157,26 @@ function onEdgeTap(eid) {
     return;
   }
   if (ui.mode === 'moveShip2') { if (E.moveShip(game, ui.data.from, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'devRoad1') { if (E.canPlaceRoad(game, eid, E.currentPlayer(game))) { ui.data.edges = [eid]; ui.mode = 'devRoad2'; renderAll(); } return; }
-  if (ui.mode === 'devRoad2') {
-    const picked = [...ui.data.edges, eid];
+  if (ui.mode === 'devRoad1' || ui.mode === 'devRoad2') { onDevRoadEdgeTap(eid); return; }
+}
+// 街道建設: 道だけに置ける／船だけに置けるならそのまま進む。どちらも置ける辺（海沿い）なら窓で選ばせる。
+function onDevRoadEdgeTap(eid) {
+  const idx = E.currentPlayer(game);
+  const canRoad = E.canPlaceRoad(game, eid, idx);
+  const canShip = game.board.pirateHex != null && E.canPlaceShip(game, eid, idx);
+  if (!canRoad && !canShip) return;
+  if (canRoad && canShip) { ui.data.pendingEdge = eid; renderAll(); return; }
+  resolveDevRoadPick(eid, canShip ? 'ship' : 'road');
+}
+function resolveDevRoadPick(eid, kind) {
+  const item = kind === 'ship' ? { id: eid, kind: 'ship' } : eid;
+  if (ui.mode === 'devRoad1') {
+    ui.data.edges = [item];
+    ui.mode = 'devRoad2';
+    ui.data.pendingEdge = null;
+    renderAll();
+  } else {
+    const picked = [...ui.data.edges, item];
     E.playRoadBuilding(game, ui.data.cardIdx, picked);
     ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender();
   }
