@@ -226,13 +226,18 @@ test('特別建設フェイズ: 手番を終えると、ほかの人が順に建
 
 // ---- CPU ----
 // CPU だけで1局、決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
-function playOutCpu(levels, maxSteps = 500000) {
-  const g = E.createGame(levels.length, Math.random);
+function playOutCpu(levels, maxSteps = 500000, options = {}) {
+  const g = E.createGame(levels.length, Math.random, options);
   for (let i = 0; i < maxSteps; i++) {
     if (g.winner != null) return g;
     if (g.phase === 'discard') {
       const d = g.pendingDiscards[0];
       assert.ok(CPU.discardFor(g, d.player, levels[d.player]), '捨て札が進まない');
+      continue;
+    }
+    if (g.phase === 'goldPick') {
+      const d = g.pendingGoldPicks[0];
+      assert.ok(CPU.pickGoldFor(g, d.player), '金の川の受け取りが進まない');
       continue;
     }
     const idx = E.currentPlayer(g);
@@ -291,6 +296,130 @@ test('CPUの交易: 持っていない資源は出せない', () => {
   p1.resources = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 };
   assert.ok(!CPU.acceptTrade(g, 1, { wheat: 4 }, { ore: 1 }, 'normal'));
   assert.ok(!CPU.acceptTrade(g, 1, { wheat: 4 }, { ore: 1 }, 'strong'));
+});
+
+// ---- 航海者版 ----
+test('航海者版: 本島19＋海18＋小島6＝43マス。金の川1枚・小島は6マス・海賊は海に、盗賊は本島の砂漠にいる', () => {
+  for (let i = 0; i < 10; i++) {
+    const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+    assert.deepEqual(g.expansions, ['seafarers']);
+    assert.equal(g.winTarget, 14);
+    assert.equal(g.board.hexes.length, 43);
+    const counts = {};
+    g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
+    assert.equal(counts.water, 18);
+    assert.equal(counts.gold, 1);
+    assert.equal(g.board.islandHexIds.size, 6);
+    assert.equal(g.board.hexes[g.board.robberHex].terrain, 'desert');
+    assert.equal(g.board.hexes[g.board.pirateHex].terrain, 'water');
+    // 金の川にも数字チップがある
+    const gold = g.board.hexes.find((h) => h.terrain === 'gold');
+    assert.ok(gold.number >= 2 && gold.number <= 12);
+  }
+});
+
+test('航海者版: 船は海に面した辺にだけ置け、自分の開拓地・船とつながっている必要がある', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0];
+  p0.resources = { wood: 5, brick: 0, sheep: 5, wheat: 0, ore: 0 };
+  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water')
+    && !g.board.hexes[g.board.pirateHex].edgeIds.includes(e.id));
+  // まだどこともつながっていないので置けない
+  assert.equal(E.canPlaceShip(g, seaEdge.id, 0), false);
+  const v = g.board.vertices[seaEdge.v1];
+  v.building = { owner: 0, type: 'settlement' };
+  p0.settlements.push(v.id);
+  assert.ok(E.buildShip(g, seaEdge.id));
+  assert.equal(g.board.edges[seaEdge.id].ship, 0);
+  assert.equal(p0.resources.wood, 4);
+  // 内陸（海に面していない）の辺には置けない
+  const inland = g.board.edges.find((e) => e.hexIds.every((h) => g.board.hexes[h].terrain !== 'water') && e.hexIds.length === 2);
+  if (inland) assert.equal(E.canPlaceShip(g, inland.id, 0), false);
+});
+
+test('航海者版: 船は手番に1回だけ、置いたばかりでなく列の端にあるものだけ動かせる', () => {
+  // 頂点によっては海の辺が1本しかなく動かし先がないので、2本ある頂点が見つかるまで盤を作り直す
+  let g, seaEdge, otherSeaEdge;
+  for (let tries = 0; tries < 200; tries++) {
+    g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+    const pirateEdges = g.board.hexes[g.board.pirateHex].edgeIds;
+    const v1 = g.board.vertices.find((v) => v.edgeIds.filter((eId) => {
+      const e = g.board.edges[eId];
+      return e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water') && !pirateEdges.includes(eId);
+    }).length >= 2);
+    if (!v1) continue;
+    const seaEdges = v1.edgeIds.map((eId) => g.board.edges[eId]).filter((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water') && !pirateEdges.includes(e.id));
+    [seaEdge, otherSeaEdge] = seaEdges;
+    g.testAnchorVertex = v1.id;
+    break;
+  }
+  assert.ok(seaEdge && otherSeaEdge, '試行回数内に見つからなかった');
+  g.phase = 'main'; g.turn = 0; g.turnNumber = 5;
+  const p0 = g.players[0];
+  g.board.vertices[g.testAnchorVertex].building = { owner: 0, type: 'settlement' };
+  p0.settlements.push(g.testAnchorVertex);
+  seaEdge.ship = 0; seaEdge.shipPlacedTurn = 1; // 前の手番に置いた船という体にする
+  p0.ships.push(seaEdge.id);
+  assert.ok(E.moveShip(g, seaEdge.id, otherSeaEdge.id));
+  assert.equal(g.board.edges[seaEdge.id].ship, null);
+  assert.equal(g.board.edges[otherSeaEdge.id].ship, 0);
+  assert.equal(g.shipMovedThisTurn, true);
+  // 同じ手番にもう1回は動かせない
+  assert.equal(E.moveShip(g, otherSeaEdge.id, seaEdge.id), false);
+});
+
+test('航海者版: 海賊は海マスだけに動かせ、隣の船の持ち主から奪う。盗賊は陸のまま', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+  g.phase = 'moveRobber'; g.turn = 0;
+  const landHex = g.board.hexes.find((h) => h.terrain !== 'water' && h.id !== g.board.robberHex);
+  assert.equal(E.moveRobber(g, landHex.id, null), true); // 陸マスへは今まで通り動かせる
+  assert.equal(g.board.robberHex, landHex.id);
+
+  const waterHex = g.board.hexes.find((h) => h.terrain === 'water' && h.id !== g.board.pirateHex);
+  const edge = g.board.edges.find((e) => waterHex.edgeIds.includes(e.id));
+  edge.ship = 1; g.players[1].resources.wood = 2;
+  g.phase = 'moveRobber';
+  assert.ok(E.moveRobber(g, waterHex.id, 1));
+  assert.equal(g.board.pirateHex, waterHex.id);
+  assert.equal(g.board.robberHex, landHex.id); // 盗賊は動いていない
+});
+
+test('航海者版: 道→船は開拓地・都市をはさむときだけ最長交易路としてつながる', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water'));
+  const v = g.board.vertices[seaEdge.v1];
+  const roadEdge = v.edgeIds.find((eid) => eid !== seaEdge.id && g.board.edges[eid].hexIds.some((h) => g.board.hexes[h].terrain !== 'water'));
+  // 接続のチェックを受けない形で直接置き、「頂点に建物がある場合だけ種類をまたげる」ことだけを見る
+  g.board.edges[roadEdge].road = 0; g.players[0].roads.push(roadEdge);
+  seaEdge.ship = 0; g.players[0].ships.push(seaEdge.id);
+  g.turn = 0;
+  E.recalcLongestRoad(g);
+  // 頂点に自分の建物がないので、道と船はつながらない（それぞれ長さ1）
+  assert.equal(g.players[0].roadLength, 1);
+  v.building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(v.id);
+  E.recalcLongestRoad(g);
+  assert.equal(g.players[0].roadLength, 2); // 開拓地をはさんでつながる
+});
+
+test('航海者版: 小島に開拓地を建てると+2点。1度だけ', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+  const islandHexId = [...g.board.islandHexIds][0];
+  const v = g.board.hexes[islandHexId].vertexIds[0];
+  assert.ok(E.canPlaceSettlement(g, v, 0, true));
+  assert.ok(E.setupPlaceSettlement(g, v));
+  assert.equal(g.players[0].islandBonus, true);
+  assert.equal(E.playerScore(g, 0), 1 + 2);
+});
+
+test('航海者版: CPUだけで4人、1局を最後まで決着できる（数局）', () => {
+  for (let i = 0; i < 5; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 500000, { expansions: ['seafarers'] });
+    assert.deepEqual(g.expansions, ['seafarers']);
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= 14);
+  }
 });
 
 test('CPU: 強さの差（よわい vs ふつう、ふつう vs つよい）を4人（2対2）対局の勝ち数で見る', () => {

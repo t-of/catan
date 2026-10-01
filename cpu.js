@@ -11,7 +11,7 @@ export const LEVELS = [
 ];
 
 // engine.js のタイル→資源の対応表（カードの強さを読むためだけの複製。ルールは曲げない）
-const TERRAIN_RESOURCE = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore', desert: null };
+const TERRAIN_RESOURCE = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore', desert: null, water: null, gold: null };
 
 const rnd = (n) => Math.floor(Math.random() * n);
 const pick = (arr) => arr[rnd(arr.length)];
@@ -62,6 +62,24 @@ function cpuSetupStep(game, level) {
   return E.setupPlaceRoad(game, e);
 }
 
+// ---- 金の川（航海者版: 出目が合えば好きな資源を選べる）。足りない資源から優先して選ぶ ----
+export function pickGoldFor(game, playerIdx) {
+  const pending = game.pendingGoldPicks.find((d) => d.player === playerIdx);
+  if (!pending) return false;
+  const p = game.players[playerIdx];
+  const taken = Object.fromEntries(E.RESOURCES.map((r) => [r, 0]));
+  const picks = [];
+  for (let i = 0; i < pending.count; i++) {
+    const avail = E.RESOURCES.filter((r) => game.bank.resources[r] - taken[r] > 0);
+    if (!avail.length) break; // 銀行が空なら選べる分だけでよい…が、枚数は一致させる必要があるので諦める
+    avail.sort((a, b) => (p.resources[a] + taken[a]) - (p.resources[b] + taken[b]));
+    const r = avail[0];
+    taken[r]++;
+    picks.push(r);
+  }
+  return E.pickGold(game, playerIdx, picks); // 銀行が足りなければ picks は pending.count より少なくなる（それでよい）
+}
+
 // ---- 捨て札（7が出たとき） ----
 export function discardFor(game, playerIdx, level) {
   const pending = game.pendingDiscards.find((d) => d.player === playerIdx);
@@ -91,9 +109,9 @@ export function discardFor(game, playerIdx, level) {
   return E.discardCards(game, playerIdx, obj);
 }
 
-// ---- 盗賊 ----
+// ---- 盗賊（CPU は盗賊だけ動かす。海賊を動かすのは人だけの操作 — ponytail: 複雑さを抑えるための簡略化） ----
 function chooseRobberHex(game, idx, level) {
-  const hexes = game.board.hexes.filter((h) => h.id !== game.board.robberHex);
+  const hexes = game.board.hexes.filter((h) => h.id !== game.board.robberHex && h.terrain !== 'water');
   if (level === 'weak') return pick(hexes).id;
   const scored = hexes.map((h) => {
     let score = 0, hasOwn = false;
@@ -151,6 +169,7 @@ function weakMainStep(game, idx) {
   const p = game.players[idx];
   const opts = [];
   if (p.roads.length < 15 && affordable(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length) opts.push('road');
+  if (p.ships.length < 15 && affordable(p.resources, E.COSTS.ship) && E.availableShipEdges(game, idx).length) opts.push('ship');
   if (p.settlements.length < 5 && affordable(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length) opts.push('settlement');
   if (p.cities.length < 4 && affordable(p.resources, E.COSTS.city) && E.availableCityVertices(game, idx).length) opts.push('city');
   if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) opts.push('dev');
@@ -161,6 +180,7 @@ function weakMainStep(game, idx) {
   opts.push('end');
   const choice = pick(opts);
   if (choice === 'road') return E.buildRoad(game, pick(E.availableRoadEdges(game, idx)));
+  if (choice === 'ship') return E.buildShip(game, pick(E.availableShipEdges(game, idx)));
   if (choice === 'settlement') return E.buildSettlement(game, pick(E.availableSettlementVertices(game, idx, false)));
   if (choice === 'city') return E.buildCity(game, pick(E.availableCityVertices(game, idx)));
   if (choice === 'dev') return E.buyDevCard(game);
@@ -182,18 +202,27 @@ function greedyBuild(game, idx, level) {
     const best = stlVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0];
     return E.buildSettlement(game, best);
   }
-  // 道は、先にまだ誰も建てていない頂点があるときだけ（行き場のない方角には延ばさない）
+  // 道・船は、先にまだ誰も建てていない頂点があるときだけ（行き場のない方角には延ばさない）。
+  // 船は海に面した辺にしか置けないので availableShipEdges が自動で絞ってくれる（航海者版でなければ常に空）。
   const edges = E.availableRoadEdges(game, idx);
-  if (p.roads.length < 15 && edges.length && affordable(p.resources, E.COSTS.road)) {
-    const scored = edges.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s);
-    if (scored[0].s > 0) return E.buildRoad(game, scored[0].e);
+  const ships = E.availableShipEdges(game, idx);
+  const roadBest = edges.length ? edges.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s)[0] : null;
+  const shipBest = ships.length ? ships.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s)[0] : null;
+  if (roadBest && roadBest.s > 0 && p.roads.length < 15 && affordable(p.resources, E.COSTS.road) && (!shipBest || roadBest.s >= shipBest.s)) {
+    return E.buildRoad(game, roadBest.e);
+  }
+  if (shipBest && shipBest.s > 0 && p.ships.length < 15 && affordable(p.resources, E.COSTS.ship)) {
+    return E.buildShip(game, shipBest.e);
   }
   if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) return E.buyDevCard(game);
   // ほかに何もできないときだけ、銀行・港と交易する（ふつうも、これがないと資源の偏りで詰まることがある）
   if (tryHelpfulTrade(game, idx)) return true;
-  // 盤がほぼ埋まって新しい開拓地が見込めないときの最後の手: 長い交易路を狙って道だけは伸ばす
+  // 盤がほぼ埋まって新しい開拓地が見込めないときの最後の手: 長い交易路を狙って道・船だけは伸ばす
   if (p.roads.length < 15 && edges.length && affordable(p.resources, E.COSTS.road) && game.longestRoadPlayer !== idx) {
     return E.buildRoad(game, edges[0]);
+  }
+  if (p.ships.length < 15 && ships.length && affordable(p.resources, E.COSTS.ship) && game.longestRoadPlayer !== idx) {
+    return E.buildShip(game, ships[0]);
   }
   return false;
 }
@@ -203,6 +232,7 @@ function pickTargetCost(game, idx) {
   if (E.availableCityVertices(game, idx).length) return E.COSTS.city;
   if (E.availableSettlementVertices(game, idx, false).length) return E.COSTS.settlement;
   if (E.availableRoadEdges(game, idx).length) return E.COSTS.road;
+  if (E.availableShipEdges(game, idx).length) return E.COSTS.ship;
   return null;
 }
 function shouldPlayKnight(game, idx) {

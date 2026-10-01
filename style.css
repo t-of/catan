@@ -115,6 +115,7 @@ button { font: inherit; color: inherit; }
 .setup__panel { position: relative; z-index: 1; width: min(420px, 100%); display: flex; flex-direction: column; gap: 10px; }
 .setup__row { display: flex; align-items: center; gap: 10px; }
 .setup__row > span { width: 48px; flex: none; }
+.setup__note { position: relative; z-index: 1; margin: -4px 0 0; font-size: 12px; color: var(--muted); }
 .segmented { display: flex; gap: 6px; flex: 1; }
 .segmented .btn { flex: 1; }
 

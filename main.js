@@ -70,6 +70,9 @@ const els = {
   gamePanel: document.getElementById('gamePanel'),
   titleBoard: document.getElementById('titleBoard'),
   playerCountPicker: document.getElementById('playerCountPicker'),
+  expansionRow: document.getElementById('expansionRow'),
+  expansionPicker: document.getElementById('expansionPicker'),
+  expansionNote: document.getElementById('expansionNote'),
   seatsPanel: document.getElementById('seatsPanel'),
   startBtn: document.getElementById('startBtn'),
   continueBtn: document.getElementById('continueBtn'),
@@ -129,6 +132,7 @@ function buildIcon(key, color) {
   if (key === 'road') { I.add(shapes, I.line(5, 21, 23, 7), 'none', 1, '#1b1612', 8); I.add(shapes, I.line(5, 21, 23, 7), 'none', 1, color, 4.5); }
   else if (key === 'settlement') I.house(shapes, 14, 17, color, dark, light);
   else if (key === 'city') I.city(shapes, 14, 17, color, dark, light);
+  else if (key === 'ship' || key === 'moveShip') I.ship(shapes, 14, 18, key === 'moveShip' ? -20 : 0, color);
   else if (key === 'dev') { I.add(shapes, I.rect(6, 3, 16, 22), '#f6eedb', 1, '#1b1612', 1.5); I.add(shapes, I.rect(9, 6, 10, 10), '#7a5bb8', 0.85); }
   shapes.forEach((s) => svg.appendChild(pathEl(s)));
   return svg;
@@ -155,6 +159,7 @@ function dieEl(value, rotateDeg) {
 
 let game = null;
 let robberMovedAt = 0, lastRobberHex = null; // 盗賊が動いた時刻（動いた直後に点滅させる）
+let pirateMovedAt = 0, lastPirateHex = null; // 海賊版（航海者版のみ使う）
 let rolling = false; // サイコロを振るアニメの途中。この間は目の表示をアニメに任せる
 let playerCount = load('playerCount', 3);
 if (![3, 4, 5, 6].includes(playerCount)) playerCount = 3;
@@ -168,11 +173,32 @@ els.playerCountPicker.addEventListener('click', (e) => {
   save('playerCount', playerCount);
   syncCountPicker();
   renderSeatsPanel();
+  syncExpansionPicker();
 });
 function syncCountPicker() {
   [...els.playerCountPicker.children].forEach((b) => b.classList.toggle('is-selected', Number(b.dataset.count) === playerCount));
 }
 syncCountPicker();
+
+// ---- 拡張選び（3〜4人だけ選べる。5〜6人は自動で5〜6人拡張） ----
+// 他の拡張（都市と騎士・交易と略奪）も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
+let expansion = load('expansion', 'none');
+if (!['none', 'seafarers'].includes(expansion)) expansion = 'none';
+els.expansionPicker.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-expansion]');
+  if (!btn) return;
+  expansion = btn.dataset.expansion;
+  save('expansion', expansion);
+  syncExpansionPicker();
+});
+function syncExpansionPicker() {
+  const choosable = playerCount <= 4;
+  els.expansionPicker.hidden = !choosable;
+  els.expansionNote.hidden = choosable;
+  if (!choosable) return;
+  [...els.expansionPicker.children].forEach((b) => b.classList.toggle('is-selected', b.dataset.expansion === expansion));
+}
+syncExpansionPicker();
 
 // ---- 席ごとの人／CPU選び ----
 // uiSeats: タイトル画面で編集中の下書き（4席ぶん持っておき、人数に合わせて先頭から使う）。
@@ -219,17 +245,26 @@ renderSeatsPanel();
 
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
-  game = E.createGame(playerCount, Math.random);
+  const expansions = playerCount <= 4 && expansion === 'seafarers' ? ['seafarers'] : [];
+  game = E.createGame(playerCount, Math.random, { expansions });
   ui = { mode: modeForPhase(), data: {} };
   showGame();
   save('game', game);
   save('gameSeats', seats);
   renderAll();
 });
+// 古い保存（航海者版より前）には ships・pendingGoldPicks などがないので、引き継ぎで補う
+function migrateGame(g) {
+  g.winTarget = g.winTarget || 10;
+  g.pendingGoldPicks = g.pendingGoldPicks || [];
+  g.shipMovedThisTurn = !!g.shipMovedThisTurn;
+  g.players.forEach((p) => { p.ships = p.ships || []; p.islandBonus = !!p.islandBonus; });
+  return g;
+}
 els.continueBtn.addEventListener('click', () => {
   const saved = load('game', null);
   if (!saved || saved.winner != null) return;
-  game = saved;
+  game = migrateGame(saved);
   const savedSeats = load('gameSeats', null);
   seats = (savedSeats && savedSeats.length === game.playerCount) ? savedSeats : Array.from({ length: game.playerCount }, () => ({ type: 'human', level: 'normal' }));
   ui = { mode: modeForPhase(), data: {} };
@@ -251,6 +286,7 @@ function modeForPhase() {
   if (!game) return 'idle';
   if (game.phase === 'setup1' || game.phase === 'setup2') return game.setupPending === 'road' ? 'setupRoad' : 'setupSettlement';
   if (game.phase === 'discard') return 'discard';
+  if (game.phase === 'goldPick') return 'goldPick';
   if (game.phase === 'moveRobber') return 'moveRobber';
   return 'idle';
 }
@@ -266,6 +302,11 @@ function playEvents() {
     setTimeout(() => { if (game) renderAll(); }, 3100); // 点滅を止める
   }
   lastRobberHex = game.board.robberHex;
+  if (game.board.pirateHex != null && lastPirateHex != null && game.board.pirateHex !== lastPirateHex) {
+    pirateMovedAt = Date.now();
+    setTimeout(() => { if (game) renderAll(); }, 3100);
+  }
+  lastPirateHex = game.board.pirateHex;
   flyGains((game.gains || []).splice(0));
 }
 
@@ -320,6 +361,10 @@ function nextCpuJob() {
     const d = game.pendingDiscards.find((x) => isCpuSeat(x.player));
     return d ? { kind: 'discard', player: d.player } : null;
   }
+  if (game.phase === 'goldPick') {
+    const d = game.pendingGoldPicks.find((x) => isCpuSeat(x.player));
+    return d ? { kind: 'goldPick', player: d.player } : null;
+  }
   return isCpuSeat(E.currentPlayer(game)) ? { kind: 'step' } : null;
 }
 function scheduleCpu() {
@@ -329,6 +374,7 @@ function scheduleCpu() {
   cpuTimer = setTimeout(() => {
     cpuTimer = null;
     if (job.kind === 'discard') CPU.discardFor(game, job.player, seatLevel(job.player));
+    else if (job.kind === 'goldPick') CPU.pickGoldFor(game, job.player);
     else CPU.step(game, seatLevel(E.currentPlayer(game)));
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
@@ -445,21 +491,29 @@ function renderBoardInto(svg, g, uiState) {
     if (!isAny) labels.push({ x: px, y: py + 8, t: RES_LABEL[type], f: bg, s: 10, w: 700 });
   });
 
-  // 道（既存＋置ける場所）
-  const buildableEdges = uiState && (uiState.mode === 'setupRoad' || uiState.mode === 'buildRoad' || uiState.mode === 'devRoad1' || uiState.mode === 'devRoad2')
+  // 道・船（既存＋置ける/動かせる場所）
+  const buildableEdges = uiState && (uiState.mode === 'setupRoad' || uiState.mode === 'buildRoad' || uiState.mode === 'buildShip' || uiState.mode === 'devRoad1' || uiState.mode === 'devRoad2')
     ? new Set(edgeChoices()) : new Set();
+  const pickableShips = uiState && uiState.mode === 'moveShip1' ? new Set(E.movableShipEdges(g, idx)) : new Set();
+  const shipTargets = uiState && uiState.mode === 'moveShip2' ? new Set(E.availableShipEdges(g, idx)) : new Set();
   g.board.edges.forEach((edge) => {
     const v1 = g.board.vertices[edge.v1], v2 = g.board.vertices[edge.v2];
     const x1 = v1.x * SCALE, y1 = v1.y * SCALE, x2 = v2.x * SCALE, y2 = v2.y * SCALE;
     const tx1 = x1 + (x2 - x1) * 0.1, ty1 = y1 + (y2 - y1) * 0.1;
     const tx2 = x1 + (x2 - x1) * 0.9, ty2 = y1 + (y2 - y1) * 0.9;
-    if (edge.road != null) {
+    if (edge.ship != null) {
+      const color = g.players[edge.ship].color;
+      const mx = (tx1 + tx2) / 2, my = (ty1 + ty2) / 2;
+      const ang = Math.atan2(ty2 - ty1, tx2 - tx1) * 180 / Math.PI;
+      I.ship(S, mx, my, ang, color);
+      if (pickableShips.has(edge.id)) queue('line', { x1, y1, x2, y2, class: 'road-hit', 'data-edge': edge.id });
+    } else if (edge.road != null) {
       const color = g.players[edge.road].color;
       I.add(S, I.line(tx1 + 1, ty1 + 3, tx2 + 1, ty2 + 3), 'none', 0.3, '#000', 10);
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, '#1b1612', 10);
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, color, 6);
       I.add(S, I.line(tx1, ty1 - 1, tx2, ty2 - 1), 'none', 0.35, '#ffffff', 1.5);
-    } else if (buildableEdges.has(edge.id)) {
+    } else if (buildableEdges.has(edge.id) || shipTargets.has(edge.id)) {
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 1, '#1b1612', 9);
       I.add(S, I.line(tx1, ty1, tx2, ty2), 'none', 0.85, 'var(--accent)', 5);
       queue('line', { x1, y1, x2, y2, class: 'road-hit', 'data-edge': edge.id });
@@ -486,7 +540,7 @@ function renderBoardInto(svg, g, uiState) {
     }
   });
 
-  // 盗賊（点滅させるので、ほかの絵とは別の <g> に入れる）
+  // 盗賊・海賊（点滅させるので、ほかの絵とは別の <g> に入れる）
   const robberShapes = [];
   let robberBlink = false;
   {
@@ -497,11 +551,21 @@ function renderBoardInto(svg, g, uiState) {
       || Date.now() < robberMovedAt + 3000);
     if (robberBlink) I.add(robberShapes, I.ell(cx + 2, cy + 2, 26, 26), 'none', 1, '#ffd84a', 4);
   }
+  const pirateShapes = [];
+  let pirateBlink = false;
+  if (g.board.pirateHex != null) {
+    const [cx, cy] = hexCenterPx(g, g.board.hexes[g.board.pirateHex]);
+    I.pirate(pirateShapes, cx, cy, 1.15);
+    pirateBlink = svg === els.board && (g.phase === 'moveRobber' || (uiState && uiState.mode === 'devKnightHex')
+      || Date.now() < pirateMovedAt + 3000);
+    if (pirateBlink) I.add(pirateShapes, I.ell(cx, cy + 4, 26, 18), 'none', 1, '#ffd84a', 4);
+  }
 
-  // 盗賊を置ける場所（タイル自体をタップできるようにする）
+  // 盗賊・海賊を置ける場所（タイル自体をタップできるようにする）
   if (uiState && (uiState.mode === 'moveRobber' || uiState.mode === 'devKnightHex')) {
     g.board.hexes.forEach((hex) => {
-      if (hex.id === g.board.robberHex) return;
+      const isWater = hex.terrain === 'water';
+      if (isWater ? hex.id === g.board.pirateHex || g.board.pirateHex == null : hex.id === g.board.robberHex) return;
       const pts = hexPointsPx(g, hex).map(([x, y]) => `${x},${y}`).join(' ');
       queue('polygon', { points: pts, class: 'hex-target', 'data-hex': hex.id });
     });
@@ -511,6 +575,11 @@ function renderBoardInto(svg, g, uiState) {
   const robberG = el('g', { class: robberBlink ? 'robber-blink' : '' });
   robberShapes.forEach((s) => robberG.appendChild(pathEl(s)));
   svg.appendChild(robberG);
+  if (pirateShapes.length) {
+    const pirateG = el('g', { class: pirateBlink ? 'robber-blink' : '' });
+    pirateShapes.forEach((s) => pirateG.appendChild(pathEl(s)));
+    svg.appendChild(pirateG);
+  }
   labels.forEach((l) => {
     const n = el('text', {
       x: l.x, y: l.y, fill: l.f, class: 'hex-number',
@@ -534,6 +603,7 @@ function edgeChoices() {
   // セットアップ中は、直前に置いた開拓地につながる道しか置けない（engine.js の setupPlaceRoad と同じ条件）。
   // それ以外の道は E.availableRoadEdges だと「前から持っている開拓地」にもつながってしまい、選べるのに置けなくなる。
   if (isSetup) return game.board.vertices[game.setupLastVertex].edgeIds.filter((eId) => game.board.edges[eId].road == null);
+  if (ui.mode === 'buildShip') return E.availableShipEdges(game, idx);
   return E.availableRoadEdges(game, idx);
 }
 
@@ -621,14 +691,18 @@ function renderBanner() {
     hint = game.setupPending === 'road' ? '道を置く場所をタップ。' : '開拓地を置く場所をタップ。';
   } else if (game.phase === 'roll') { main = `プレイヤー${idx + 1}の手番。`; hint = 'サイコロを振ってください。'; }
   else if (game.phase === 'discard') { main = `プレイヤー${game.pendingDiscards[0].player + 1}は${game.pendingDiscards[0].count}枚捨てます。`; hint = '窓で捨てる資源を選んでください。'; }
-  else if (game.phase === 'moveRobber') { main = `プレイヤー${idx + 1}の番。`; hint = '盗賊を動かすタイルをタップ。'; }
+  else if (game.phase === 'goldPick') { main = `プレイヤー${game.pendingGoldPicks[0].player + 1}は金の川で${game.pendingGoldPicks[0].count}枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
+  else if (game.phase === 'moveRobber') { main = `プレイヤー${idx + 1}の番。`; hint = '盗賊か海賊を動かすタイルをタップ。'; }
   else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: プレイヤー${idx + 1}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
   if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
   if (ui.mode === 'buildRoad') hint = '道を置く場所をタップ。';
   else if (ui.mode === 'buildSettlement') hint = '開拓地を置く場所をタップ。';
   else if (ui.mode === 'buildCity') hint = '都市にする開拓地をタップ。';
-  else if (ui.mode === 'devKnightHex' || ui.mode === 'robberTargetForDev') hint = '盗賊を動かすタイルをタップ。';
+  else if (ui.mode === 'buildShip') hint = '船を置く場所をタップ。';
+  else if (ui.mode === 'moveShip1') hint = '動かす自分の船をタップ（端にあるものだけ）。';
+  else if (ui.mode === 'moveShip2') hint = '移す先の海の辺をタップ。';
+  else if (ui.mode === 'devKnightHex' || ui.mode === 'robberTargetForDev') hint = '盗賊か海賊を動かすタイルをタップ。';
   else if (ui.mode === 'devRoad1') hint = '街道建設: 1本目の道を置く場所をタップ。';
   else if (ui.mode === 'devRoad2') hint = '街道建設: 2本目の道を置く場所をタップ（終わってもよい）。';
   els.hint.textContent = hint;
@@ -656,20 +730,25 @@ function costRow(cost) {
 }
 function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (res[k] || 0) >= v); }
 
+const BUILD_MODE = { road: 'buildRoad', settlement: 'buildSettlement', city: 'buildCity', ship: 'buildShip' };
 function renderBuildGrid() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
   const inMain = (game.phase === 'main' || game.phase === 'specialBuilding') && humansTurn();
+  const seafarers = game.board.pirateHex != null;
   const defs = [
     { key: 'road', label: '道', cost: E.COSTS.road, ok: inMain && p.roads.length < 15 && canAfford(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length },
+  ];
+  if (seafarers) defs.push({ key: 'ship', label: '船', cost: E.COSTS.ship, ok: inMain && p.ships.length < 15 && canAfford(p.resources, E.COSTS.ship) && E.availableShipEdges(game, idx).length });
+  defs.push(
     { key: 'settlement', label: '開拓地', cost: E.COSTS.settlement, ok: inMain && p.settlements.length < 5 && canAfford(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length },
     { key: 'city', label: '都市', cost: E.COSTS.city, ok: inMain && p.cities.length < 4 && canAfford(p.resources, E.COSTS.city) && E.availableCityVertices(game, idx).length },
     { key: 'dev', label: '発展カード', cost: E.COSTS.dev, ok: inMain && game.bank.devDeck.length > 0 && canAfford(p.resources, E.COSTS.dev) },
-  ];
+  );
   els.buildGrid.innerHTML = '';
   defs.forEach((d) => {
     const btn = document.createElement('button');
-    const active = (d.key === 'road' && ui.mode === 'buildRoad') || (d.key === 'settlement' && ui.mode === 'buildSettlement') || (d.key === 'city' && ui.mode === 'buildCity');
+    const active = ui.mode === BUILD_MODE[d.key];
     btn.className = `build-btn${active ? ' is-selected' : ''}`;
     btn.disabled = !d.ok;
     btn.appendChild(buildIcon(d.key, p.color));
@@ -681,11 +760,30 @@ function renderBuildGrid() {
     btn.addEventListener('click', () => {
       if (d.key === 'dev') { E.buyDevCard(game); playEvents(); persistAndRender(); return; }
       if (active) { ui = { mode: 'idle', data: {} }; renderAll(); return; }
-      ui = { mode: d.key === 'road' ? 'buildRoad' : d.key === 'settlement' ? 'buildSettlement' : 'buildCity', data: {} };
+      ui = { mode: BUILD_MODE[d.key], data: {} };
       renderAll();
     });
     els.buildGrid.appendChild(btn);
   });
+  // 船を動かす（航海者版・手番に1回だけ）
+  if (seafarers) {
+    const movable = E.movableShipEdges(game, idx);
+    const btn = document.createElement('button');
+    const active = ui.mode === 'moveShip1' || ui.mode === 'moveShip2';
+    btn.className = `build-btn${active ? ' is-selected' : ''}`;
+    btn.disabled = !(inMain && movable.length);
+    btn.appendChild(buildIcon('moveShip', p.color));
+    const label = document.createElement('span');
+    label.className = 'build-btn__label';
+    label.textContent = '船を動かす';
+    btn.appendChild(label);
+    btn.addEventListener('click', () => {
+      if (active) { ui = { mode: 'idle', data: {} }; renderAll(); return; }
+      ui = { mode: 'moveShip1', data: {} };
+      renderAll();
+    });
+    els.buildGrid.appendChild(btn);
+  }
 }
 
 // ================================================================
@@ -699,6 +797,12 @@ function renderPanel() {
   if (ui.mode === 'discard' && game.phase === 'discard') {
     const d = game.pendingDiscards.find((x) => !isCpuSeat(x.player));
     if (d) { openPanel(); renderDiscardPanel(d); }
+    else closePanel();
+    return;
+  }
+  if (ui.mode === 'goldPick' && game.phase === 'goldPick') {
+    const d = game.pendingGoldPicks.find((x) => !isCpuSeat(x.player));
+    if (d) { openPanel(); renderGoldPickPanel(d); }
     else closePanel();
     return;
   }
@@ -755,9 +859,33 @@ function renderDiscardPanel(d) {
   });
 }
 
+function renderGoldPickPanel(d) {
+  const picked = ui.data.goldPicked || (ui.data.goldPicked = []);
+  els.panel.innerHTML = `<h2>プレイヤー${d.player + 1}: 金の川で好きな資源を${d.count}枚選ぶ（あと${d.count - picked.length}枚）</h2>
+    <div class="res-pick" data-row="pick"></div>
+    <p>選んだ: ${picked.length ? '' : 'なし'}</p>
+    <button class="btn btn--accent" data-act="confirm" ${picked.length === d.count ? '' : 'disabled'}>受け取る</button>`;
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => {
+    b.appendChild(resIcon(r));
+    const s = document.createElement('span'); s.textContent = `残り${game.bank.resources[r]}`; b.appendChild(s);
+    if (game.bank.resources[r] - picked.filter((x) => x === r).length <= 0) b.disabled = true;
+  }, 'pick');
+  const p = els.panel.querySelector('p');
+  picked.forEach((r) => p.appendChild(resIcon(r)));
+  bindPanel({
+    pick: (b) => { if (picked.length < d.count) { picked.push(b.dataset.res); renderPanel(); } },
+    confirm: () => {
+      E.pickGold(game, d.player, picked);
+      ui.data.goldPicked = null;
+      if (game.phase !== 'goldPick') ui = { mode: 'idle', data: {} };
+      persistAndRender();
+    },
+  });
+}
+
 function renderRobberTargetPanel(hexId, forDev) {
   const idx = E.currentPlayer(game);
-  const targets = E.robberTargets(game, hexId, idx);
+  const targets = E.banditTargets(game, hexId, idx);
   els.panel.innerHTML = `<h2>誰から奪う？</h2>`
     + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">プレイヤー${t + 1}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
       : `<button class="card-btn" data-act="pick" data-target="">誰も奪えない</button>`);
@@ -936,6 +1064,7 @@ function renderDevRoadFinish() {
 function humansTurn() {
   if (!game) return false;
   if (game.phase === 'discard') return game.pendingDiscards.some((d) => !isCpuSeat(d.player));
+  if (game.phase === 'goldPick') return game.pendingGoldPicks.some((d) => !isCpuSeat(d.player));
   return !isCpuSeat(E.currentPlayer(game));
 }
 function renderActionBar() {
@@ -1004,6 +1133,13 @@ function onVertexTap(vid) {
 function onEdgeTap(eid) {
   if (ui.mode === 'setupRoad') { E.setupPlaceRoad(game, eid); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
   if (ui.mode === 'buildRoad') { if (E.buildRoad(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildShip') { if (E.buildShip(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'moveShip1') {
+    const idx = E.currentPlayer(game);
+    if (E.movableShipEdges(game, idx).includes(eid)) { ui = { mode: 'moveShip2', data: { from: eid } }; renderAll(); }
+    return;
+  }
+  if (ui.mode === 'moveShip2') { if (E.moveShip(game, ui.data.from, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'devRoad1') { if (E.canPlaceRoad(game, eid, E.currentPlayer(game))) { ui.data.edges = [eid]; ui.mode = 'devRoad2'; renderAll(); } return; }
   if (ui.mode === 'devRoad2') {
     const picked = [...ui.data.edges, eid];
@@ -1011,19 +1147,20 @@ function onEdgeTap(eid) {
     ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender();
   }
 }
+function hexCurrentPos(hid) { return game.board.hexes[hid].terrain === 'water' ? game.board.pirateHex : game.board.robberHex; }
 function onHexTap(hid) {
   if (ui.mode === 'moveRobber') {
-    if (hid === game.board.robberHex) return;
+    if (hid === hexCurrentPos(hid)) return;
     const idx = E.currentPlayer(game);
-    const targets = E.robberTargets(game, hid, idx);
+    const targets = E.banditTargets(game, hid, idx);
     if (targets.length > 1) { ui.data.pendingHex = hid; ui.data.forDev = null; renderAll(); }
     else { E.moveRobber(game, hid, targets[0] ?? null); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     return;
   }
   if (ui.mode === 'devKnightHex') {
-    if (hid === game.board.robberHex) return;
+    if (hid === hexCurrentPos(hid)) return;
     const idx = E.currentPlayer(game);
-    const targets = E.robberTargets(game, hid, idx);
+    const targets = E.banditTargets(game, hid, idx);
     if (targets.length > 1) { ui.data.pendingHex = hid; ui.data.forDev = ui.data.cardIdx; renderAll(); }
     else { E.playKnight(game, ui.data.cardIdx, hid, targets[0] ?? null); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
   }
@@ -1039,6 +1176,7 @@ function renderAll() {
   if (!game) return;
   if (game.phase === 'moveRobber' && ui.mode !== 'moveRobber' && ui.mode !== 'robberTarget') ui = { mode: 'moveRobber', data: {} };
   if (game.phase === 'discard' && ui.mode !== 'discard') ui = { mode: 'discard', data: {} };
+  if (game.phase === 'goldPick' && ui.mode !== 'goldPick') ui = { mode: 'goldPick', data: {} };
   renderBoardInto(els.board, game, ui);
   renderDice();
   renderPlayers();

@@ -70,6 +70,22 @@ export function cactus(a, x, y, s) {
   add(a, rect(x + 3 * s, y - 9 * s, 7 * s, 3 * s) + rect(x + 7 * s, y - 15 * s, 3 * s, 8 * s) + ell(x + 8.5 * s, y - 15 * s, 1.5 * s, 1.5 * s), '#4a7a35');
   add(a, rect(x + 1 * s, y - 20 * s, 2 * s, 20 * s), '#40702f');
 }
+// 船（航海者版）。胴体を色分けし、帆は少し傾けて止まっているようすに見せる
+export function ship(a, x, y, angleDeg, color) {
+  const rad = (Math.PI / 180) * angleDeg;
+  const dx = Math.cos(rad), dy = Math.sin(rad);
+  const nx = -dy, ny = dx;
+  const hull = [[-11, 3], [-7, 6], [7, 6], [11, 3], [8, -1], [-8, -1]].map(([fx, fy]) => [x + dx * fx + nx * fy, y + dy * fx + ny * fy]);
+  add(a, poly(hull), '#4a3420', 1, '#1b1612', 1.2);
+  add(a, line(x, y - 1, x, y - 13), 'none', 1, '#6b4a2b', 1.6);
+  add(a, poly([[x, y - 12], [x + 7, y - 7], [x, y - 2]]), color, 0.92, '#1b1612', 1);
+}
+// 海賊（航海者版の盗賊役）。小舟に乗せた robber() をそのまま流用する
+export function pirate(a, x, y, s) {
+  add(a, ell(x + 2, y + 10 * s, 15 * s, 4 * s), '#000', 0.3);
+  add(a, poly([[x - 14 * s, y + 8 * s], [x - 9 * s, y + 13 * s], [x + 9 * s, y + 13 * s], [x + 14 * s, y + 8 * s], [x + 10 * s, y + 2 * s], [x - 10 * s, y + 2 * s]]), '#2b1d10', 1, '#120c06', 1.2);
+  robber(a, x, y - 2 * s, s * 0.85);
+}
 export function robber(a, x, y, s) {
   add(a, ell(x + 2 * s, y + 2 * s, 13 * s, 4 * s), '#3b2f14', 0.35);
   add(a, ell(x, y, 10 * s, 3.2 * s), '#1c1b22');
@@ -100,6 +116,8 @@ export const TERRAIN_STYLE = {
   hills: { edge: '#86401f', grad: 'hill' },
   mountains: { edge: '#596070', grad: 'mountain' },
   desert: { edge: '#b39c62', grad: 'desert' },
+  water: { edge: '#0e5265', grad: 'water' },
+  gold: { edge: '#c79a2c', grad: 'gold' },
 };
 
 // タイルの上に乗る地形ごとの絵（中心 x,y。R=66 の六角形を前提にした配置）
@@ -142,6 +160,18 @@ export function terrainDecor(a, terrain, x, y) {
     add(a, 'M' + (x - 44) + ',' + (y + 34) + ' q22,-14 44,-2 t40,0', 'none', 0.6, '#c7ad72', 4);
     tag(a, n, 'a-haze', x, y, 0);
     cactus(a, x - 32, y - 12, 0.95); cactus(a, x + 36, y + 26, 0.8);
+  } else if (terrain === 'water') {
+    const n = a.length; // 波紋だけの何もないマス
+    add(a, 'M' + (x - 36) + ',' + (y - 6) + ' q18,-10 36,0 t34,0', 'none', 0.3, '#bfe6ee', 2);
+    add(a, 'M' + (x - 30) + ',' + (y + 22) + ' q15,-9 30,0 t28,0', 'none', 0.22, '#bfe6ee', 2);
+    tag(a, n, 'a-wave', x, y, 0);
+  } else if (terrain === 'gold') {
+    [[-20, -14], [18, -22], [26, 18], [-24, 22], [0, 2]].forEach(([dx, dy], i) => {
+      const n = a.length;
+      add(a, ell(x + dx, y + dy, 7, 7), '#f6cf4a', 1, '#8a6a1e', 1.2);
+      add(a, ell(x + dx - 1.5, y + dy - 1.5, 2.4, 2.4), '#fff0b0', 0.8);
+      tag(a, n, 'a-sway', x + dx, y + dy, -(x + i * 0.8));
+    });
   }
 }
 
@@ -167,6 +197,8 @@ export function defsMarkup(prefix) {
 <linearGradient id="${g('hill')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e4935f"/><stop offset="1" stop-color="#ae5631"/></linearGradient>
 <linearGradient id="${g('mountain')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#bcc2ce"/><stop offset="1" stop-color="#767e90"/></linearGradient>
 <linearGradient id="${g('desert')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4e6bb"/><stop offset="1" stop-color="#d5bc80"/></linearGradient>
+<linearGradient id="${g('water')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a8aa0"/><stop offset="1" stop-color="#114f62"/></linearGradient>
+<linearGradient id="${g('gold')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6df8a"/><stop offset="1" stop-color="#cf9f2e"/></linearGradient>
 <radialGradient id="${g('token')}" cx="0.4" cy="0.35" r="0.75"><stop offset="0" stop-color="#fffcf4"/><stop offset="1" stop-color="#e6d8b8"/></radialGradient>
 `;
 }
