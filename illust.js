@@ -151,8 +151,9 @@ export function terrainDecor(a, terrain, x, y) {
     add(a, ell(x + 20, y - 23, 14, 5), '#e39a6c', 0.6);
     bricks(a, x - 30, y - 10, 0.9); bricks(a, x + 32, y + 28, 0.9); bricks(a, x, y - 36, 0.8);
   } else if (terrain === 'mountains') {
-    peak(a, x - 30, y + 2, 36); peak(a, x + 30, y + 4, 38); peak(a, x, y - 16, 44);
-    peak(a, x - 14, y + 50, 22); peak(a, x + 16, y + 52, 20);
+    // 六角形（R=66）の辺からはみ出さない大きさ・位置
+    peak(a, x - 25, y + 4, 34); peak(a, x + 24, y + 6, 36); peak(a, x, y - 16, 44);
+    peak(a, x - 12, y + 44, 20); peak(a, x + 14, y + 46, 18);
     const n = a.length; // 山にかかる雲
     add(a, ell(x - 10, y - 30, 14, 5) + ell(x, y - 34, 10, 6) + ell(x + 9, y - 30, 11, 4.5), '#ffffff', 0.75);
     tag(a, n, 'a-cloud', x, y, -(x + y) / 7);
