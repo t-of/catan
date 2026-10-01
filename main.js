@@ -389,8 +389,10 @@ function renderBoardInto(svg, g, uiState) {
     const e = g.board.edges[eId];
     const v1 = g.board.vertices[e.v1], v2 = g.board.vertices[e.v2];
     const mx = (v1.x + v2.x) / 2 * SCALE, my = (v1.y + v2.y) / 2 * SCALE;
-    const len = Math.hypot(mx, my) || 1;
-    const px = mx + (mx / len) * (SCALE * 0.55), py = my + (my / len) * (SCALE * 0.55);
+    // 札は、マスの両どなりの辺を海へ延ばした線が交わる所（辺を底にした正三角形の頂点）に置く
+    const [hx, hy] = hexCenterPx(g, g.board.hexes[e.hexIds[0]]);
+    const nx = mx - hx, ny = my - hy, len = Math.hypot(nx, ny) || 1;
+    const px = mx + (nx / len) * (SCALE * Math.sqrt(3) / 2), py = my + (ny / len) * (SCALE * Math.sqrt(3) / 2);
     const type = v1.port;
     const isAny = type === '3:1';
     const bg = isAny ? '#f6eedb' : RES_COLOR[type];
