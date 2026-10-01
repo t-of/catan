@@ -818,3 +818,71 @@ test('交易と略奪・漁師: CPUだけで4人、数局きちんと決着す�
     assert.ok(E.playerScore(g, g.winner) >= target);
   }
 });
+
+// ---- 川 ----
+test('交易と略奪・川: 勝利点10点。開拓地・道は建てると金貨1枚、都市への建て替えでは増えない', () => {
+  const g = tbGame('rivers');
+  assert.equal(g.winTarget, 10);
+  // セットアップの開拓地として置く（つながりのルールを気にせず置けるので、道・開拓地それぞれの金貨を確かめやすい）
+  g.phase = 'setup1'; g.setupOrder = [0]; g.setupIndex = 0; g.setupPending = 'settlement';
+  const riverVerts = [...g.board.riverVertexIds];
+  const v = riverVerts.find((vid) => g.board.vertices[vid].edgeIds.some((eId) => g.board.riverEdgeIds.has(eId) || g.board.riverVertexIds.has(g.board.edges[eId].v1) && g.board.riverVertexIds.has(g.board.edges[eId].v2))) || riverVerts[0];
+  assert.ok(E.setupPlaceSettlement(g, v));
+  assert.equal(g.players[0].gold, 1); // 開拓地で金貨1枚
+  const edge = g.board.vertices[v].edgeIds.find((eId) => g.board.riverVertexIds.has(v) && (g.board.edges[eId].v1 === v || g.board.edges[eId].v2 === v));
+  assert.ok(E.setupPlaceRoad(g, edge));
+  assert.equal(g.players[0].gold, 2); // 道でさらに金貨1枚
+  g.phase = 'main'; g.turn = 0;
+  g.players[0].resources.wheat = 2; g.players[0].resources.ore = 3;
+  assert.ok(E.buildCity(g, v));
+  assert.equal(g.players[0].gold, 2); // 都市への建て替えでは増えない
+});
+
+test('交易と略奪・川: 川をまたぐ辺には橋(土2木1)が要り、建てると金貨3枚もらえる。橋は3本まで', () => {
+  const g = tbGame('rivers');
+  g.phase = 'main'; g.turn = 0;
+  const v = [...g.board.riverVertexIds][0];
+  g.board.vertices[v].building = { owner: 0, type: 'settlement' };
+  g.players[0].settlements.push(v);
+  const edgeId = [...g.board.riverEdgeIds][0];
+  g.players[0].resources = { wood: 1, brick: 1, sheep: 0, wheat: 0, ore: 0 };
+  assert.equal(E.buildRoad(g, edgeId), false); // ふつうの道のコストだけでは足りない
+  g.players[0].resources = { wood: 1, brick: 2, sheep: 0, wheat: 0, ore: 0 };
+  const goldBefore = g.players[0].gold;
+  assert.ok(E.buildRoad(g, edgeId));
+  assert.equal(g.players[0].gold, goldBefore + 3);
+  assert.equal(g.players[0].bridges, 1);
+});
+
+test('交易と略奪・川: 金貨2枚で資源1枚、手番に2回まで。富豪(+1点)・貧者(-2点、同点なら全員)', () => {
+  const g = tbGame('rivers');
+  // 開始時は全員0枚で同点なので、全員が貧者になる（公式どおり）
+  assert.deepEqual(g.poorPlayers.slice().sort(), [0, 1, 2, 3]);
+  assert.equal(g.richPlayer, null);
+  g.phase = 'main'; g.turn = 0;
+  g.players[0].gold = 6;
+  assert.ok(E.tradeGold(g, 'ore'));
+  assert.ok(E.tradeGold(g, 'ore'));
+  assert.equal(E.tradeGold(g, 'ore'), false); // 2回使った
+  assert.equal(g.players[0].gold, 2);
+  assert.equal(g.richPlayer, 0);
+  assert.deepEqual(g.poorPlayers.slice().sort(), [1, 2, 3]);
+});
+
+test('交易と略奪・川: 銀行と交易して資源を金貨に替えられる(2:1港があっても使えない)', () => {
+  const g = tbGame('rivers');
+  g.phase = 'main'; g.turn = 0;
+  g.players[0].resources.wood = 4;
+  assert.ok(E.tradeResourceForGold(g, 'wood'));
+  assert.equal(g.players[0].gold, 1);
+  assert.equal(g.players[0].resources.wood, 0);
+});
+
+test('交易と略奪・川: CPUだけで4人、数局きちんと決着する(勝利点10点)', () => {
+  for (let i = 0; i < 3; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'rivers' });
+    assert.equal(g.scenario, 'rivers');
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
+  }
+});
