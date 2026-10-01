@@ -313,16 +313,26 @@ els.continueBtn.addEventListener('click', () => {
   showGame();
   renderAll();
 });
-function showGame() { els.setupPanel.hidden = true; els.gamePanel.hidden = false; }
+const homeBtn = document.getElementById('homeBtn');
+function showGame() { els.setupPanel.hidden = true; els.gamePanel.hidden = false; homeBtn.hidden = false; }
 
 // 続きがあれば「つづきから」を出す（自動では始めない。まずタイトルを見せる）
-{
+function showContinue() {
   const saved = load('game', null);
-  if (saved && saved.winner == null) {
-    els.continueBtn.hidden = false;
-    els.continueBtn.textContent = `つづきから（ターン${saved.turnNumber}）`;
-  }
+  els.continueBtn.hidden = !(saved && saved.winner == null);
+  if (!els.continueBtn.hidden) els.continueBtn.textContent = `つづきから（ターン${saved.turnNumber}）`;
 }
+showContinue();
+
+// タイトルへ戻る。盤は操作のたびに保存済みなので「つづきから」で戻れる
+homeBtn.addEventListener('click', () => {
+  if (rolling) return;
+  clearTimeout(cpuTimer); cpuTimer = null;
+  closePanel();
+  game = null;
+  els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true;
+  showContinue();
+});
 
 function modeForPhase() {
   if (!game) return 'idle';
