@@ -284,3 +284,25 @@ button { font: inherit; color: inherit; }
 }
 
 /* 全画面のオーバーレイ・モーダルを隠すときは opacity ではなく display: none（webapp-kit.css にも同じ決まりがある） */
+
+/* ---- 盤の動き（main.js の pathEl がクラスと回転の中心を付ける。ヘッダーの「動き」で止められる） ---- */
+#board path[class], #titleBoard path[class] { transform-box: view-box; }
+.a-wave { animation: a-wave 5s ease-in-out infinite; }
+.a-surf { animation: a-surf 6s ease-in-out infinite; }
+.a-sway { animation: a-sway 4s ease-in-out infinite; }
+.a-walk { animation: a-walk 18s linear infinite; }
+.a-cloud { animation: a-cloud 24s ease-in-out infinite; }
+.a-haze { animation: a-haze 3s ease-in-out infinite; }
+@keyframes a-wave { 0%, 100% { transform: translate(0, 0); opacity: 0.1; } 50% { transform: translate(8px, -2px); opacity: 0.35; } }
+@keyframes a-surf { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.38; } }
+@keyframes a-sway { 0%, 100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
+/* 右へ歩き、草を食んで、振り向いて戻る */
+@keyframes a-walk {
+  0%, 10% { transform: translateX(0) scaleX(1); }
+  40%, 50% { transform: translateX(7px) scaleX(1); }
+  50.1%, 60% { transform: translateX(7px) scaleX(-1); }
+  90%, 100% { transform: translateX(0) scaleX(-1); }
+}
+@keyframes a-cloud { 0%, 100% { transform: translateX(-14px); } 50% { transform: translateX(14px); } }
+@keyframes a-haze { 0%, 100% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-1.5px); opacity: 0.55; } }
+.motion-off [class^="a-"] { animation: none; }

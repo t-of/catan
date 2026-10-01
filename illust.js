@@ -7,6 +7,9 @@ function f(n) { return Math.round(n * 10) / 10; }
 
 // shapes 配列に1枚追加する。d=パス、fill=塗り、o=不透明度、sk=ふち色、sw=ふちの太さ。
 export function add(arr, d, fill, o, sk, sw) { arr.push({ d, f: fill, o: o ?? 1, sk: sk || 'none', sw: sw || 0 }); }
+// 動きの印。start 以降に足した図形に、CSS アニメーションのクラス c と回転・反転の中心 (ox,oy)、ずらす秒 dl を付ける。
+// 同じ印の図形は同じ動きをするので、木や羊が 1 つの絵としてまとまって動く（style.css の .a-*）。
+export function tag(arr, start, c, ox, oy, dl) { for (let i = start; i < arr.length; i++) Object.assign(arr[i], { c, ox, oy, dl }); }
 
 export function ell(x, y, rx, ry) { return 'M' + f(x - rx) + ',' + f(y) + ' a' + f(rx) + ',' + f(ry) + ' 0 1,0 ' + f(2 * rx) + ',0 a' + f(rx) + ',' + f(ry) + ' 0 1,0 ' + f(-2 * rx) + ',0 Z'; }
 export function rect(x, y, w, h) { return 'M' + f(x) + ',' + f(y) + ' h' + f(w) + ' v' + f(h) + ' h' + f(-w) + ' Z'; }
@@ -104,19 +107,23 @@ export function terrainDecor(a, terrain, x, y) {
   if (terrain === 'forest') {
     [[-30, -20], [0, -34], [30, -20], [-44, 6], [44, 8], [-28, 36], [28, 36], [-6, 50]]
       .sort((p, q) => p[1] - q[1])
-      .forEach(([dx, dy]) => tree(a, x + dx, y + dy, 0.9));
+      .forEach(([dx, dy], i) => { const n = a.length; tree(a, x + dx, y + dy, 0.9); tag(a, n, 'a-sway', x + dx, y + dy, -(x + i * 0.7)); });
   } else if (terrain === 'pasture') {
     add(a, ell(x - 18, y + 30, 34, 12), '#d3ef9c', 0.55);
     add(a, ell(x + 22, y - 30, 30, 10), '#d3ef9c', 0.55);
     [[-40, -2], [36, -6], [-10, -44], [14, 46], [42, 24]].forEach(([dx, dy], i) => add(a, ell(x + dx, y + dy, 1.8, 1.8), i % 2 ? '#fff6c8' : '#ffffff', 0.9));
-    sheep(a, x - 28, y - 14, 0.9); sheep(a, x + 26, y - 26, 0.8); sheep(a, x + 28, y + 34, 0.9); sheep(a, x - 26, y + 38, 0.8);
+    [[-28, -14, 0.9], [26, -26, 0.8], [28, 34, 0.9], [-26, 38, 0.8]].forEach(([dx, dy, k], i) => {
+      const n = a.length; sheep(a, x + dx, y + dy, k); tag(a, n, 'a-walk', x + dx, y + dy, -(y + i * 4.3));
+    });
   } else if (terrain === 'field') {
     for (let yy = -46; yy <= 50; yy += 12) {
       const m = Math.abs(yy);
       const hw = m <= 28 ? 46 : 46 * (56 - m) / 28;
       if (hw > 6) add(a, line(x - hw + 4, y + yy, x + hw - 4, y + yy - 6), 'none', 0.55, '#c9962f', 3);
     }
-    sheaf(a, x - 32, y - 4, 0.95); sheaf(a, x + 34, y - 2, 0.95); sheaf(a, x, y - 34, 0.9);
+    [[-32, -4, 0.95], [34, -2, 0.95], [0, -34, 0.9]].forEach(([dx, dy, k], i) => {
+      const n = a.length; sheaf(a, x + dx, y + dy, k); tag(a, n, 'a-sway', x + dx, y + dy, -(x + i * 0.9));
+    });
   } else if (terrain === 'hills') {
     add(a, ell(x - 20, y + 26, 30, 13), '#b9603a');
     add(a, ell(x - 24, y + 22, 18, 6), '#d98a5c', 0.6);
@@ -126,9 +133,14 @@ export function terrainDecor(a, terrain, x, y) {
   } else if (terrain === 'mountains') {
     peak(a, x - 30, y + 2, 36); peak(a, x + 30, y + 4, 38); peak(a, x, y - 16, 44);
     peak(a, x - 14, y + 50, 22); peak(a, x + 16, y + 52, 20);
+    const n = a.length; // 山にかかる雲
+    add(a, ell(x - 10, y - 30, 14, 5) + ell(x, y - 34, 10, 6) + ell(x + 9, y - 30, 11, 4.5), '#ffffff', 0.75);
+    tag(a, n, 'a-cloud', x, y, -(x + y) / 7);
   } else if (terrain === 'desert') {
+    const n = a.length; // 砂の照り返し（かげろう）
     add(a, 'M' + (x - 50) + ',' + (y + 10) + ' q25,-18 50,-4 t48,2', 'none', 0.8, '#fbf0cf', 5);
     add(a, 'M' + (x - 44) + ',' + (y + 34) + ' q22,-14 44,-2 t40,0', 'none', 0.6, '#c7ad72', 4);
+    tag(a, n, 'a-haze', x, y, 0);
     cactus(a, x - 32, y - 12, 0.95); cactus(a, x + 36, y + 26, 0.8);
   }
 }

@@ -16,6 +16,17 @@ function save(key, value) {
   try { localStorage.setItem(STORE + key, JSON.stringify(value)); } catch { /* 保存できなくても遊べる */ }
 }
 
+// 盤の動き（波・木・羊など）のオン・オフ。動きを減らす設定の端末では、はじめはオフ。
+const motionBtn = document.getElementById('motionBtn');
+function setMotion(on) {
+  document.documentElement.classList.toggle('motion-off', !on);
+  motionBtn.setAttribute('aria-pressed', String(on));
+  motionBtn.textContent = on ? '動き オン' : '動き オフ';
+  save('motion', on);
+}
+setMotion(load('motion', !matchMedia('(prefers-reduced-motion: reduce)').matches));
+motionBtn.addEventListener('click', () => setMotion(motionBtn.getAttribute('aria-pressed') !== 'true'));
+
 WebAppKit.init({ title: 'catan', text: '六角タイルの盤で資源を集め、道・開拓地・都市を建てて競う交代プレイの試作。' });
 
 if ('serviceWorker' in navigator) {
@@ -98,7 +109,13 @@ function pathEl(s) {
   const n = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   n.setAttribute('d', s.d);
   n.setAttribute('fill', s.f);
-  n.setAttribute('style', `opacity:${s.o};stroke:${s.sk};stroke-width:${s.sw}px;stroke-linejoin:round;stroke-linecap:round`);
+  let st = `opacity:${s.o};stroke:${s.sk};stroke-width:${s.sw}px;stroke-linejoin:round;stroke-linecap:round`;
+  if (s.c) {
+    n.setAttribute('class', s.c);
+    // 盤は操作のたびに描き直すので、ページを開いた時刻からの経過ぶん遅らせて、動きが毎回頭から始まらないようにする
+    st += `;transform-origin:${s.ox}px ${s.oy}px;animation-delay:${(s.dl - performance.now() / 1000).toFixed(2)}s`;
+  }
+  n.setAttribute('style', st);
   return n;
 }
 function buildIcon(key, color) {
@@ -247,11 +264,13 @@ function renderBoardInto(svg, g, uiState) {
     const x = vb.minX + ((k * 137 + 40) % Math.max(1, vb.w));
     const y = vb.minY + ((k * 71 + 20) % Math.max(1, vb.h));
     I.add(S, `M${x},${y} q7,-5 14,0 t14,0`, 'none', 0.18, '#bfe6ee', 1.5);
+    I.tag(S, S.length - 1, 'a-wave', x, y, -k * 0.6);
   }
 
   // 浅瀬と砂浜のふち
   const allHexPath = g.board.hexes.map((h) => I.poly(hexPointsPx(g, h))).join(' ');
   I.add(S, allHexPath, '#5fb7b5', 0.25, '#5fb7b5', 66);
+  I.tag(S, S.length - 1, 'a-surf', 0, 0, 0);
   I.add(S, allHexPath, '#e7d3a1', 1, '#e7d3a1', 30);
   I.add(S, allHexPath, '#cdb683', 1, '#cdb683', 12);
 
