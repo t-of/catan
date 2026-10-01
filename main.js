@@ -756,7 +756,17 @@ function renderTradeMenu() {
     pwdec: (b) => { const r = b.dataset.res; if (pGet[r] > 0) { pGet[r]--; renderPanel(); } },
     bank: () => { E.bankTrade(game, give, want); ui.data.tradeGive = null; ui.data.tradeWant = null; playEvents(); persistAndRender(); renderPanel(); },
     playerTrade: () => {
-      E.playerTrade(game, other, pGive, pGet);
+      if (isCpuSeat(other)) {
+        // CPUが相手のときは、成立させる前に受けるか断るかを決める（人の手札は見ず、今回の内容だけで判断）
+        if (CPU.acceptTrade(game, other, pGive, pGet, seatLevel(other))) {
+          E.playerTrade(game, other, pGive, pGet);
+          game.log.push(`プレイヤー${other + 1}が交易を受けました`);
+        } else {
+          game.log.push(`プレイヤー${other + 1}は交易を断りました`);
+        }
+      } else {
+        E.playerTrade(game, other, pGive, pGet);
+      }
       ui.data.pGive = null; ui.data.pGet = null;
       playEvents(); persistAndRender(); renderPanel();
     },
@@ -779,7 +789,7 @@ function fillOtherPick(container, other) {
     const b = document.createElement('button');
     b.dataset.act = 'other'; b.dataset.p = i;
     if (i === other) b.classList.add('is-selected');
-    b.textContent = `プレイヤー${i + 1}`;
+    b.textContent = `プレイヤー${i + 1}` + (isCpuSeat(i) ? '（CPU）' : '');
     container.appendChild(b);
   });
 }

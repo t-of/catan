@@ -238,6 +238,42 @@ function tryHelpfulTrade(game, idx) {
   }
   return false;
 }
+// ---- 人からの交易を受けるかどうか ----
+// 持っている資源と目標（pickTargetCost）に照らして、give（CPUがもらう）と get（CPUが出す）の値打ちを比べる。
+// 人の手札の中身は見ない。首位に近い相手には厳しめに、よわいはほぼでたらめ（半々）。
+function playerPips(game, idx, res) {
+  let total = 0;
+  game.board.hexes.forEach((h) => {
+    if (TERRAIN_RESOURCE[h.terrain] !== res) return;
+    h.vertexIds.forEach((vid) => {
+      const b = game.board.vertices[vid].building;
+      if (b && b.owner === idx) total += pip(h.number) * (b.type === 'city' ? 2 : 1);
+    });
+  });
+  return total;
+}
+function resourceValue(game, idx, res) {
+  const p = game.players[idx];
+  let score = Math.max(0, 3 - playerPips(game, idx, res)); // 自分の産出が薄いほど欲しい
+  const cost = pickTargetCost(game, idx);
+  if (cost && cost[res] && (p.resources[res] || 0) < cost[res]) score += 2; // 今の目標に足りない分は価値が高い
+  score -= Math.min(p.resources[res] || 0, 3) * 0.3; // すでに余っているほど手放しやすい
+  return score;
+}
+export function acceptTrade(game, cpuIdx, give, get, level = 'normal') {
+  const p = game.players[cpuIdx];
+  if (!affordable(p.resources, get)) return false; // 持っていない資源は出せない
+  if (level === 'weak') return Math.random() < 0.5;
+  const gain = E.RESOURCES.reduce((a, r) => a + resourceValue(game, cpuIdx, r) * (give[r] || 0), 0);
+  const cost = E.RESOURCES.reduce((a, r) => a + resourceValue(game, cpuIdx, r) * (get[r] || 0), 0);
+  const proposer = E.currentPlayer(game);
+  const leaderScore = Math.max(...game.players.map((_, i) => E.playerScore(game, i)));
+  let margin = 0;
+  if (E.playerScore(game, proposer) >= leaderScore) margin = 1.5; // 相手が首位（タイ含む）なら厳しめ
+  else if (leaderScore - E.playerScore(game, proposer) <= 1) margin = 0.7;
+  return gain - cost > margin;
+}
+
 function strongStep(game, idx) {
   const p = game.players[idx];
   const rb = p.devCards.findIndex((c) => c.type === 'roadBuilding' && playableDev(game, c));

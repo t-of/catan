@@ -174,6 +174,35 @@ test('CPU: 4人（強さいろいろ）で数十局、全局きちんと決着�
   }
 });
 
+test('CPUが受ける交易: 自分の目標に足りない資源をもらい、余っている資源を渡すなら受ける', () => {
+  const g = E.createGame(2, Math.random);
+  g.phase = 'main'; g.turn = 0;
+  const p1 = g.players[1];
+  p1.settlements.push(0); // 都市化できる開拓地が1つある扱いにし、目標コストを{wheat:2, ore:3}にする
+  p1.resources = { wood: 6, brick: 6, sheep: 6, wheat: 0, ore: 0 };
+  // 人が ore を3枚渡し、CPUは余っている wood を1枚渡すだけ
+  assert.ok(CPU.acceptTrade(g, 1, { ore: 3 }, { wood: 1 }, 'normal'));
+});
+
+test('CPUが断る交易: 自分に足りない資源を手放し、余っている資源しかもらえないなら断る', () => {
+  const g = E.createGame(2, Math.random);
+  g.phase = 'main'; g.turn = 0;
+  const p1 = g.players[1];
+  p1.settlements.push(0);
+  p1.resources = { wood: 6, brick: 6, sheep: 6, wheat: 0, ore: 5 };
+  // CPUが欲しいoreを手放し、すでに余っているwoodを1枚もらうだけ
+  assert.ok(!CPU.acceptTrade(g, 1, { wood: 1 }, { ore: 3 }, 'normal'));
+});
+
+test('CPUの交易: 持っていない資源は出せない', () => {
+  const g = E.createGame(2, Math.random);
+  g.phase = 'main'; g.turn = 0;
+  const p1 = g.players[1];
+  p1.resources = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 };
+  assert.ok(!CPU.acceptTrade(g, 1, { wheat: 4 }, { ore: 1 }, 'normal'));
+  assert.ok(!CPU.acceptTrade(g, 1, { wheat: 4 }, { ore: 1 }, 'strong'));
+});
+
 test('CPU: 強さの差（よわい vs ふつう、ふつう vs つよい）を4人（2対2）対局の勝ち数で見る', () => {
   // 実際のアプリは3〜4人用なので、比較も4人（levelA2人 + levelB2人、席はランダム）で行う
   function winRate(levelA, levelB, games) {
