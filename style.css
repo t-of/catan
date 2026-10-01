@@ -136,8 +136,9 @@ button { font: inherit; color: inherit; }
   grid-template-rows: minmax(0, 1fr);
   gap: 14px;
 }
-/* 広い画面: ページ全体を画面の高さに固定し、盤は残りに収める（左右の列は中でスクロール） */
-@media (min-width: 901px) { .app { height: 100dvh; } }
+/* 広い画面のゲーム中だけ、ページを画面の高さに固定し、盤は残りに収める（左右の列は中でスクロール）。
+   人数選びの画面は縦に伸びてよい（固定すると上下が切れる） */
+@media (min-width: 901px) { .app:has(#gamePanel:not([hidden])) { height: 100dvh; } }
 .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; overflow-y: auto; }
 .side-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 4px 2px; gap: 8px; }
 .side-head__brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
