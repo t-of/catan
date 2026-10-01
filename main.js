@@ -1131,7 +1131,7 @@ function renderPanel() {
 }
 
 function renderWinPanel() {
-  els.panel.innerHTML = `<h2>プレイヤー${game.winner + 1}の勝ち！</h2><p>10点に到達しました。</p>
+  els.panel.innerHTML = `<h2>プレイヤー${game.winner + 1}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>
     <button class="btn btn--accent" data-act="close">とじる</button>`;
   bindPanel({ close: () => { closePanel(); } });
 }

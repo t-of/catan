@@ -585,11 +585,13 @@ export function playerScore(game, idx) {
   }
   return score;
 }
+// 漁師: 古い靴を持つ人は勝利点が1点多く要る（公式どおり。10点が標準、古い靴は11点）
+export function winTargetFor(game, idx) {
+  return (game.winTarget || 10) + (game.scenario === 'fishermen' && game.oldBootHolder === idx ? 1 : 0);
+}
 function checkWin(game, idx) {
   if (game.winner != null) return;
-  // 漁師: 古い靴を持つ人は勝利点が1点多く要る（公式どおり。10点が標準、古い靴は11点）
-  const target = (game.scenario === 'fishermen' && game.oldBootHolder === idx) ? (game.winTarget || 10) + 1 : (game.winTarget || 10);
-  if (playerScore(game, idx) >= target) { game.winner = idx; game.phase = 'gameOver'; fire(game, 'win'); log(game, `プレイヤー${idx + 1}の勝ち！`); }
+  if (playerScore(game, idx) >= winTargetFor(game, idx)) { game.winner = idx; game.phase = 'gameOver'; fire(game, 'win'); log(game, `プレイヤー${idx + 1}の勝ち！`); }
 }
 // 古い靴・富豪・貧者・ラクダの印など、自分では何も建てていない人の得点(に要る点)を変えることがあるので、
 // ここで全員ぶん checkWin をかけ直す(でないと、その人が次に何か建てるまで勝利が見逃される)
