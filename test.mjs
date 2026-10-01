@@ -886,3 +886,60 @@ test('交易と略奪・川: CPUだけで4人、数局きちんと決着する(�
     assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
   }
 });
+
+// ---- 隊商 ----
+test('交易と略奪・隊商: オアシスは盤の中心、3本の出発点、勝利点12点', () => {
+  const g = tbGame('caravans');
+  assert.equal(g.winTarget, 12);
+  const oasis = g.board.hexes[g.board.oasisHexId];
+  assert.equal(oasis.q, 0); assert.equal(oasis.r, 0);
+  assert.equal(g.board.camelStartEdges.length, 3);
+  assert.equal(g.board.caravans.length, 3);
+  assert.equal(g.board.robberHex, null);
+});
+
+test('交易と略奪・隊商: 開拓地を建てると手番の終わりに投票でラクダが置かれ、長い交易路で2本ぶんになる', () => {
+  const g = tbGame('caravans', 3);
+  // セットアップを最後まで進め、プレイヤー0が実際に道でつながった場所に建てられるようにする
+  while (g.phase === 'setup1' || g.phase === 'setup2') {
+    const idx = E.currentPlayer(g);
+    if (g.setupPending === 'settlement') E.setupPlaceSettlement(g, E.availableSettlementVertices(g, idx, true)[0]);
+    else E.setupPlaceRoad(g, g.board.vertices[g.setupLastVertex].edgeIds.find((eId) => g.board.edges[eId].road == null));
+  }
+  assert.equal(g.phase, 'roll');
+  g.turn = 0; g.phase = 'main';
+  const p0 = g.players[0];
+  // 開拓地を2つ・道を2本置いただけでは、まだ新しい開拓地を置ける場所がない（距離ルール）ので、道を1本伸ばす
+  let otherV = null;
+  for (let i = 0; i < 6 && !otherV; i++) {
+    otherV = E.availableSettlementVertices(g, 0, false)[0];
+    if (otherV) break;
+    const edges = E.availableRoadEdges(g, 0);
+    if (!edges.length) break;
+    p0.resources.wood = 1; p0.resources.brick = 1;
+    E.buildRoad(g, edges[0]);
+  }
+  p0.resources = { wood: 1, brick: 1, sheep: 1, wheat: 1, ore: 0 };
+  assert.ok(otherV != null);
+  assert.ok(E.buildSettlement(g, otherV));
+  assert.equal(p0.pendingCamelBuilds, 1);
+  assert.ok(E.endTurn(g));
+  assert.equal(g.phase, 'camelVote');
+  // 3人全員が投票する(資源がなくても0票で参加できる)
+  for (let i = 0; i < 3; i++) assert.ok(E.submitCamelBid(g, g.pendingCamelVote.order[g.pendingCamelVote.idx], {}));
+  assert.equal(g.phase, 'camelPlace');
+  const options = E.camelPlacementOptions(g);
+  assert.ok(options.length > 0);
+  assert.ok(E.placeCamel(g, options[0]));
+  assert.equal(g.board.caravans.some((c) => c.includes(options[0])), true);
+  assert.equal(g.phase, 'roll'); // ラクダを置き終えたので、次の手番に進む
+});
+
+test('交易と略奪・隊商: CPUだけで4人、数局きちんと決着する(勝利点12点)', () => {
+  for (let i = 0; i < 3; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 800000, { expansions: ['traders-barbarians'], scenario: 'caravans' });
+    assert.equal(g.scenario, 'caravans');
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
+  }
+});
