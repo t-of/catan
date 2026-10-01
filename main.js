@@ -261,6 +261,7 @@ els.startBtn.addEventListener('click', () => {
 function migrateGame(g) {
   g.winTarget = g.winTarget || 10;
   g.pendingGoldPicks = g.pendingGoldPicks || [];
+  g.pendingScienceBonus = g.pendingScienceBonus || [];
   g.shipMovedThisTurn = !!g.shipMovedThisTurn;
   g.players.forEach((p) => { p.ships = p.ships || []; p.islandBonus = !!p.islandBonus; });
   return g;
@@ -291,6 +292,7 @@ function modeForPhase() {
   if (game.phase === 'setup1' || game.phase === 'setup2') return game.setupPending === 'road' ? 'setupRoad' : 'setupSettlement';
   if (game.phase === 'discard') return 'discard';
   if (game.phase === 'goldPick') return 'goldPick';
+  if (game.phase === 'scienceBonus') return 'scienceBonus';
   if (game.phase === 'moveRobber') return 'moveRobber';
   return 'idle';
 }
@@ -369,6 +371,10 @@ function nextCpuJob() {
     const d = game.pendingGoldPicks.find((x) => isCpuSeat(x.player));
     return d ? { kind: 'goldPick', player: d.player } : null;
   }
+  if (game.phase === 'scienceBonus') {
+    const p = game.pendingScienceBonus.find((x) => isCpuSeat(x));
+    return p != null ? { kind: 'scienceBonus', player: p } : null;
+  }
   return isCpuSeat(E.currentPlayer(game)) ? { kind: 'step' } : null;
 }
 function scheduleCpu() {
@@ -379,6 +385,7 @@ function scheduleCpu() {
     cpuTimer = null;
     if (job.kind === 'discard') CPU.discardFor(game, job.player, seatLevel(job.player));
     else if (job.kind === 'goldPick') CPU.pickGoldFor(game, job.player);
+    else if (job.kind === 'scienceBonus') CPU.pickScienceBonusFor(game, job.player);
     else CPU.step(game, seatLevel(E.currentPlayer(game)));
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
@@ -542,6 +549,7 @@ function renderBoardInto(svg, g, uiState) {
       const dark = I.tint(color, -0.4), light = I.tint(color, 0.35);
       if (v.building.type === 'city') I.city(S, x, y, color, dark, light);
       else I.house(S, x, y, color, dark, light);
+      if (g.metropolis && E.TRACKS.some((t) => g.metropolis[t] === v.id)) labels.push({ x, y: y - 20, t: '★', f: '#f6dc9c', s: 16, w: 700 });
     } else if (buildableVerts.has(v.id)) {
       I.add(S, I.ell(x, y, 15, 15), '#f0cf85', 0.3);
       I.add(S, I.ell(x, y, 9, 9), '#f0cf85', 0.6, '#fff3cf', 2.5);
@@ -753,7 +761,7 @@ function renderCk() {
   E.TRACKS.forEach((t) => {
     const cell = document.createElement('span');
     cell.className = 'ck-chip';
-    const star = game.metropolis[t] === idx ? '★' : '';
+    const star = E.metropolisOwner(game, t) === idx ? '★' : '';
     cell.textContent = `${E.TRACK_LABEL[t]} ${p.cityImprovements[t]}/5${star}`;
     trackRow.appendChild(cell);
   });
@@ -780,6 +788,14 @@ function renderCk() {
   manage.disabled = !humansTurn() || !(game.phase === 'main' || game.phase === 'specialBuilding') || !p.knights.length;
   manage.addEventListener('click', () => { ui = { mode: 'knightMenu', data: {} }; renderAll(); });
   els.ckPanel.appendChild(manage);
+  if (p.cityImprovements.trade >= 3) {
+    const tradeBtn = document.createElement('button');
+    tradeBtn.className = 'btn btn--small';
+    tradeBtn.textContent = '商品を交易（2:1）';
+    tradeBtn.disabled = !humansTurn() || game.phase !== 'main' || !E.COMMODITIES.some((c) => (p.commodities[c] || 0) >= 2);
+    tradeBtn.addEventListener('click', () => { ui = { mode: 'tradeCommodity', data: {} }; renderAll(); });
+    els.ckPanel.appendChild(tradeBtn);
+  }
 }
 
 function renderDice() {
@@ -800,6 +816,7 @@ function renderBanner() {
   } else if (game.phase === 'roll') { main = `プレイヤー${idx + 1}の手番。`; hint = 'サイコロを振ってください。'; }
   else if (game.phase === 'discard') { main = `プレイヤー${game.pendingDiscards[0].player + 1}は${game.pendingDiscards[0].count}枚捨てます。`; hint = '窓で捨てる資源を選んでください。'; }
   else if (game.phase === 'goldPick') { main = `プレイヤー${game.pendingGoldPicks[0].player + 1}は金の川で${game.pendingGoldPicks[0].count}枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
+  else if (game.phase === 'scienceBonus') { main = `プレイヤー${game.pendingScienceBonus[0] + 1}は科学の力で資源を1枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
   else if (game.phase === 'moveRobber') { main = `プレイヤー${idx + 1}の番。`; hint = '盗賊か海賊を動かすタイルをタップ。'; }
   else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: プレイヤー${idx + 1}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
@@ -862,7 +879,7 @@ function renderBuildGrid() {
   );
   if (ck) {
     defs.push(
-      { key: 'knight', label: '騎士', cost: E.KNIGHT_COST, ok: inMain && p.knights.length < E.MAX_KNIGHTS_PER_PLAYER && canAfford(p.resources, E.KNIGHT_COST) && E.availableKnightVertices(game, idx).length },
+      { key: 'knight', label: '騎士', cost: E.KNIGHT_COST, ok: inMain && canAfford(p.resources, E.KNIGHT_COST) && E.availableKnightVertices(game, idx).length },
       { key: 'wall', label: '都市壁', cost: E.WALL_COST, ok: false }, // クリックで即建てる（下のハンドラで特別扱い）
       { key: 'improve', label: '都市の発展', cost: {}, ok: inMain && E.TRACKS.some((t) => E.canImproveCity(game, idx, t)) },
     );
@@ -933,6 +950,12 @@ function renderPanel() {
     else closePanel();
     return;
   }
+  if (ui.mode === 'scienceBonus' && game.phase === 'scienceBonus') {
+    const p = game.pendingScienceBonus.find((x) => !isCpuSeat(x));
+    if (p != null) { openPanel(); renderScienceBonusPanel(p); }
+    else closePanel();
+    return;
+  }
   if (ui.data.pendingHex != null) { openPanel(); renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev); return; }
   if (ui.data.pendingEdge != null) { openPanel(); renderDevRoadKindPanel(ui.data.pendingEdge); return; }
   if (ui.mode === 'tradeMenu') { openPanel(); renderTradeMenu(); return; }
@@ -941,6 +964,7 @@ function renderPanel() {
   if (ui.mode === 'devMonopoly') { openPanel(); renderMonopolyPanel(); return; }
   if (ui.mode === 'devRoad2') { openPanel(); renderDevRoadFinish(); return; }
   if (ui.mode === 'knightMenu') { openPanel(); renderKnightMenu(); return; }
+  if (ui.mode === 'tradeCommodity') { openPanel(); renderCommodityTradePanel(); return; }
   if (ui.mode === 'knightExpelTarget') { openPanel(); renderKnightExpelPanel(); return; }
   if (ui.mode === 'cityImprove') { openPanel(); renderCityImprovePanel(); return; }
   if (ui.mode === 'progressMenu') { openPanel(); renderProgressMenu(); return; }
@@ -1016,6 +1040,24 @@ function renderGoldPickPanel(d) {
       E.pickGold(game, d.player, picked);
       ui.data.goldPicked = null;
       if (game.phase !== 'goldPick') ui = { mode: 'idle', data: {} };
+      persistAndRender();
+    },
+  });
+}
+
+// 都市と騎士(科学3段階目): この目で何も入らなかった人が、好きな資源を1枚選ぶ
+function renderScienceBonusPanel(playerIdx) {
+  els.panel.innerHTML = `<h2>プレイヤー${playerIdx + 1}: 科学の力で好きな資源を1枚選ぶ</h2>
+    <div class="res-pick" data-row="pick"></div>`;
+  fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => {
+    b.appendChild(resIcon(r));
+    const s = document.createElement('span'); s.textContent = `残り${game.bank.resources[r]}`; b.appendChild(s);
+    if (game.bank.resources[r] <= 0) b.disabled = true;
+  }, 'pick');
+  bindPanel({
+    pick: (b) => {
+      E.pickScienceBonus(game, playerIdx, b.dataset.res);
+      if (game.phase !== 'scienceBonus') ui = { mode: 'idle', data: {} };
       persistAndRender();
     },
   });
@@ -1211,6 +1253,34 @@ function renderDevRoadFinish() {
 // ================================================================
 // 都市と騎士の窓（騎士を操作・都市の発展・進歩カード）
 // ================================================================
+// 都市と騎士(交易3段階目): 商品2枚で、銀行から好きな資源か商品を1枚もらう
+function renderCommodityTradePanel() {
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  const giving = ui.data.give;
+  if (!giving) {
+    const rows = E.COMMODITIES.filter((c) => (p.commodities[c] || 0) >= 2)
+      .map((c) => `<button class="card-btn" data-act="give" data-c="${c}">${E.COMMODITY_LABEL[c]}を2枚渡す（持っている ${p.commodities[c]}枚）</button>`).join('')
+      || '<p>2枚ある商品がありません</p>';
+    els.panel.innerHTML = `<h2>商品を交易（2:1）</h2>${rows}<button class="ghost-btn" data-act="cancel">やめる</button>`;
+    bindPanel({
+      give: (b) => { ui.data.give = b.dataset.c; renderPanel(); },
+      cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+    });
+    return;
+  }
+  els.panel.innerHTML = `<h2>もらうものを選ぶ</h2>
+    <div class="res-pick" data-row="res"></div>
+    <div class="res-pick" data-row="com"></div>
+    <button class="ghost-btn" data-act="cancel">やめる</button>`;
+  fillResPick(els.panel.querySelector('[data-row="res"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'res');
+  fillResPick(els.panel.querySelector('[data-row="com"]'), E.COMMODITIES, () => false, (c, b) => b.appendChild(resIcon(c)), 'com');
+  bindPanel({
+    res: (b) => { if (E.tradeCommodity(game, giving, 'resource', b.dataset.res)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } },
+    com: (b) => { if (E.tradeCommodity(game, giving, 'commodity', b.dataset.res)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } },
+    cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
+  });
+}
 function renderKnightMenu() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
@@ -1259,7 +1329,7 @@ function renderCityImprovePanel() {
   const rows = E.TRACKS.map((t) => {
     const lv = p.cityImprovements[t];
     const costText = lv < 5 ? `商品${E.cityImprovementCost(lv + 1)}枚（${E.COMMODITY_LABEL[E.TRACK_COMMODITY[t]]}）` : '最大';
-    const star = game.metropolis[t] === idx ? '★大都市' : '';
+    const star = E.metropolisOwner(game, t) === idx ? '★大都市' : '';
     return `<div class="sheet__row"><span>${E.TRACK_LABEL[t]} ${lv}/5 ${star}</span><span>${costText}</span>
       <button class="ghost-btn" data-act="up" data-t="${t}" ${E.canImproveCity(game, idx, t) ? '' : 'disabled'}>上げる</button></div>`;
   }).join('');
@@ -1359,7 +1429,8 @@ function renderProgressTradePanel() {
 function renderProgressKnightOwnPanel() {
   const idx = E.currentPlayer(game);
   const p = game.players[idx];
-  const list = p.knights.filter((k) => k.level < 3 && !(k.level === 2 && (p.cityImprovements.politics || 0) < 3));
+  const list = p.knights.filter((k) => k.level < 3 && !(k.level === 2 && (p.cityImprovements.politics || 0) < 3)
+    && p.knights.filter((x) => x.level === k.level + 1).length < E.MAX_KNIGHTS_PER_LEVEL);
   const rows = list.map((k) => `<button class="card-btn" data-act="pick" data-k="${k.id}">${E.KNIGHT_LEVEL_LABEL[k.level]} → ${E.KNIGHT_LEVEL_LABEL[k.level + 1]}</button>`).join('') || '<p>昇格できる騎士がいません</p>';
   els.panel.innerHTML = `<h2>騎士を1体、只で昇格</h2>${rows}<button class="ghost-btn" data-act="cancel">やめる</button>`;
   bindPanel({
@@ -1402,6 +1473,7 @@ function humansTurn() {
   if (!game) return false;
   if (game.phase === 'discard') return game.pendingDiscards.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'goldPick') return game.pendingGoldPicks.some((d) => !isCpuSeat(d.player));
+  if (game.phase === 'scienceBonus') return game.pendingScienceBonus.some((p) => !isCpuSeat(p));
   return !isCpuSeat(E.currentPlayer(game));
 }
 function renderActionBar() {
@@ -1574,6 +1646,7 @@ function renderAll() {
   if (game.phase === 'moveRobber' && ui.mode !== 'moveRobber' && ui.mode !== 'robberTarget') ui = { mode: 'moveRobber', data: {} };
   if (game.phase === 'discard' && ui.mode !== 'discard') ui = { mode: 'discard', data: {} };
   if (game.phase === 'goldPick' && ui.mode !== 'goldPick') ui = { mode: 'goldPick', data: {} };
+  if (game.phase === 'scienceBonus' && ui.mode !== 'scienceBonus') ui = { mode: 'scienceBonus', data: {} };
   renderBoardInto(els.board, game, ui);
   renderDice();
   renderPlayers();

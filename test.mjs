@@ -240,6 +240,11 @@ function playOutCpu(levels, maxSteps = 500000, options = {}) {
       assert.ok(CPU.pickGoldFor(g, d.player), '金の川の受け取りが進まない');
       continue;
     }
+    if (g.phase === 'scienceBonus') {
+      const p = g.pendingScienceBonus[0];
+      assert.ok(CPU.pickScienceBonusFor(g, p), '科学3段階目の資源選びが進まない');
+      continue;
+    }
     const idx = E.currentPlayer(g);
     assert.ok(CPU.step(g, levels[idx]), 'CPUの手が進まない');
   }
@@ -466,16 +471,19 @@ test('都市と騎士: 都市の発展（商品を払って段階を上げる・
   assert.equal(p0.cityImprovements.trade, 3);
   p0.commodities.cloth = 4;
   assert.ok(E.improveCity(g, 'trade')); // 4段階目=大都市
-  assert.equal(g.metropolis.trade, 0);
+  assert.equal(g.metropolis.trade, v0.id); // 大都市は、その都市（頂点）に置かれる
+  assert.equal(E.metropolisOwner(g, 'trade'), 0);
   assert.equal(E.playerScore(g, 0), 2 /* city */ + 2 /* metropolis */);
-  // プレイヤー1が追い越すと大都市を奪う
+  // プレイヤー1が追い越すと大都市を奪う（印だけ移り、プレイヤー0の都市はただの都市に戻る）
   const v1 = g.board.vertices.find((v) => !v.building);
   v1.building = { owner: 1, type: 'city' }; p1.cities.push(v1.id);
   g.turn = 1;
   p1.commodities.cloth = 1 + 2 + 3 + 4 + 5;
   for (let i = 0; i < 5; i++) E.improveCity(g, 'trade');
   assert.equal(p1.cityImprovements.trade, 5);
-  assert.equal(g.metropolis.trade, 1); // 5段階目に追い越されたので奪われる
+  assert.equal(g.metropolis.trade, v1.id); // 5段階目に追い越されたので奪われる
+  assert.equal(E.metropolisOwner(g, 'trade'), 1);
+  assert.equal(v0.building.type, 'city'); // プレイヤー0の都市はそのまま（ただの都市に戻るだけ）
   // 5段階目の持ち主からはもう奪えない
   g.turn = 0;
   assert.equal(E.canImproveCity(g, 0, 'trade'), false); // すでに3段階目、商品がない
@@ -522,6 +530,95 @@ test('都市と騎士: 騎士の起動・昇格・移動・追い出し・盗賊
   assert.ok(targets.some((t) => t.ownerIdx === 1));
   assert.ok(E.expelKnight(g, kid, 1, 1));
   assert.equal(p1.knights.length, 0);
+});
+
+test('都市と騎士: 騎士は弱い・強い・最強、各段階2体まで（公式の数）', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0];
+  const v = g.board.vertices.find((x) => x.edgeIds.length >= 3);
+  v.building = { owner: 0, type: 'city' }; p0.cities.push(v.id);
+  v.edgeIds.slice(0, 2).forEach((eId) => { g.board.edges[eId].road = 0; p0.roads.push(eId); });
+  p0.resources = { wood: 0, brick: 0, sheep: 10, wheat: 10, ore: 10 };
+  p0.cityImprovements.politics = 3;
+  // 弱い騎士を、置ける場所がある限り2体まで
+  const vs1 = E.availableKnightVertices(g, 0);
+  assert.ok(vs1.length >= 2, 'テストの前提: 置ける場所が2つ以上必要');
+  assert.ok(E.buildKnight(g, vs1[0]));
+  assert.ok(E.buildKnight(g, E.availableKnightVertices(g, 0)[0]));
+  assert.equal(p0.knights.length, 2);
+  assert.equal(E.availableKnightVertices(g, 0).length, 0); // 3体目は置けない
+  assert.equal(E.canPlaceKnight(g, E.availableSettlementVertices(g, 0, true)[0], 0), false);
+  // 両方とも強いに昇格できるが、最強は2体まで（ここでは2体とも最強にできる）
+  const [k1, k2] = p0.knights;
+  assert.ok(E.upgradeKnight(g, k1.id));
+  assert.ok(E.upgradeKnight(g, k2.id));
+  assert.ok(E.upgradeKnight(g, k1.id));
+  assert.ok(E.upgradeKnight(g, k2.id));
+  assert.equal(p0.knights.filter((k) => k.level === 3).length, 2);
+  // 3体目の騎士を新しく建てて、強いに昇格しようとしても、強い段階はもう2体いないので空きがあるはず
+  // （弱い騎士がいなくなったので、弱いの枠は空いている）
+  const vs2 = E.availableKnightVertices(g, 0);
+  if (vs2.length) {
+    assert.ok(E.buildKnight(g, vs2[0]));
+    const k3 = p0.knights.find((k) => k.level === 1);
+    assert.equal(E.canUpgradeKnight(g, 0, k3.id), true); // 強いの枠(2体)はまだ0体なので昇格できる
+  }
+});
+
+test('都市と騎士: 交易3段階目の商品2:1交易、科学3段階目の資源保証', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0];
+  // 交易3段階目がないと交易できない
+  p0.commodities.cloth = 2;
+  assert.equal(E.canTradeCommodity(g, 0, 'cloth'), false);
+  p0.cityImprovements.trade = 3;
+  assert.equal(E.canTradeCommodity(g, 0, 'cloth'), true);
+  const bankWoodBefore = g.bank.resources.wood;
+  assert.ok(E.tradeCommodity(g, 'cloth', 'resource', 'wood'));
+  assert.equal(p0.commodities.cloth, 0);
+  assert.equal(p0.resources.wood, 1);
+  assert.equal(g.bank.resources.wood, bankWoodBefore - 1);
+  p0.commodities.coin = 2;
+  assert.ok(E.tradeCommodity(g, 'coin', 'commodity', 'paper'));
+  assert.equal(p0.commodities.paper, 1);
+
+  // 科学3段階目: 赤の目で自分に何も入らなかった人は、あとで資源を1枚選べる（7は除く）
+  const g2 = ckGame();
+  g2.players[0].cityImprovements.science = 3;
+  g2.players.forEach((p) => { p.resources = { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 }; });
+  // 誰の建物にも当たらない目を選ぶため、全員の建物を取り除いた状態で振る
+  g2.phase = 'roll';
+  const seq = [2.5 / 6, 2.5 / 6, 0.99]; // d1=3,d2=3→合計6（7以外。盤上に誰も建物がないので何も入らない）
+  const total = E.rollDice(g2, () => seq.shift());
+  assert.notEqual(total, 7);
+  assert.ok(g2.pendingScienceBonus.includes(0));
+  assert.ok(E.pickScienceBonus(g2, 0, 'wheat'));
+  assert.equal(g2.players[0].resources.wheat, 1);
+  assert.equal(g2.pendingScienceBonus.includes(0), false);
+  assert.equal(g2.phase, 'main');
+});
+
+test('都市と騎士: 大都市は特定の都市に置かれ、蛮族の襲来ではその都市が守られる', () => {
+  const g = ckGame();
+  const p0 = g.players[0];
+  const v0 = g.board.vertices.find((v) => !v.building);
+  v0.building = { owner: 0, type: 'city' }; p0.cities.push(v0.id);
+  const v1 = g.board.vertices.find((v) => !v.building && v.id !== v0.id);
+  v1.building = { owner: 0, type: 'city' }; p0.cities.push(v1.id);
+  p0.commodities.cloth = 1 + 2 + 3 + 4;
+  g.phase = 'main'; g.turn = 0;
+  for (let i = 0; i < 4; i++) E.improveCity(g, 'trade');
+  const metroVid = g.metropolis.trade;
+  assert.ok([v0.id, v1.id].includes(metroVid));
+  // 騎士なし・都市2つ（大都市1つ含む）→ 蛮族に負ける。大都市の都市は守られ、もう1つが開拓地に戻る
+  g.barbarianProgress = 6; g.phase = 'roll'; g.turn = 0;
+  E.rollDice(g, () => 0.1);
+  assert.equal(g.barbarianAttacked, true);
+  assert.equal(p0.cities.length, 1);
+  assert.equal(p0.cities[0], metroVid); // 残っているのは大都市の都市
+  assert.equal(g.board.vertices[metroVid].building.type, 'city');
 });
 
 test('都市と騎士: 蛮族の襲来（勝つと守護者点、負けると都市が1つ開拓地に戻る）', () => {

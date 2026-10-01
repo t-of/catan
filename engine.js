@@ -56,7 +56,7 @@ const CK_BANK_COMMODITY_START = 10; // 商品の銀行の枚数（公式の正�
 export const KNIGHT_COST = { sheep: 1, ore: 1 }; // 建てる・昇格するコスト（共通）
 export const KNIGHT_ACTIVATE_COST = { wheat: 1 };
 export const WALL_COST = { brick: 2 };
-const MAX_KNIGHTS = 3; // 1人が持てる騎士の数（簡略化。README に注記）
+export const MAX_KNIGHTS_PER_LEVEL = 2; // 公式ルール: 弱い・強い・最強、各段階2体まで（合計で最大6体）
 const MAX_WALLS = 3;
 const MAX_CITY_LEVEL = 5;
 export const KNIGHT_LEVEL_LABEL = { 1: '弱い騎士', 2: '強い騎士', 3: '最強の騎士' };
@@ -98,6 +98,7 @@ function shuffle(arr, rng) {
 function round3(n) { return Math.round(n * 1000) / 1000; }
 function emptyResources() { return { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 }; }
 function emptyCommodities() { return { paper: 0, cloth: 0, coin: 0 }; }
+function sumCommodities(o) { return o ? COMMODITIES.reduce((a, k) => a + (o[k] || 0), 0) : 0; }
 function buildProgressDeck(rng, color) { return shuffle(PROGRESS_CARDS[color].flatMap((id) => Array(PROGRESS_COPIES).fill(id)), rng); }
 function sumRes(o) { return RESOURCES.reduce((a, k) => a + (o[k] || 0), 0); }
 function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (res[k] || 0) >= v); }
@@ -345,7 +346,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
       devDeck: ck ? [] : buildDevDeck(rng, ext), // 都市と騎士では発展カードは使わない
       commodities: ck ? { paper: CK_BANK_COMMODITY_START, cloth: CK_BANK_COMMODITY_START, coin: CK_BANK_COMMODITY_START } : null,
     },
-    phase: 'setup1', // setup1 → setup2 → roll → main / discard / goldPick / moveRobber / specialBuilding → gameOver
+    phase: 'setup1', // setup1 → setup2 → roll → main / discard / goldPick / scienceBonus / moveRobber / specialBuilding → gameOver
     setupOrder,
     setupIndex: 0,
     setupPending: 'settlement', // 'settlement' | 'road'
@@ -358,6 +359,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     winTarget: ck ? 13 : (seafarers ? 14 : 10),
     pendingDiscards: [], // [{ player, count }]
     pendingGoldPicks: [], // 航海者版: 金の川マスで選べる資源 [{ player, count }]
+    pendingScienceBonus: [], // 都市と騎士(科学3段階目): この目で何も入らなかった人の列 [playerIdx]
     specialBuildQueue: [], // 5〜6人拡張の特別建設フェイズ: 手番を終えた人以外が順に並ぶ
     specialBuildIdx: 0,
     longestRoadPlayer: null,
@@ -393,7 +395,7 @@ export function playerScore(game, idx) {
     + devVpCount(p)
     + (p.islandBonus ? 2 : 0);
   if (game.metropolis) {
-    TRACKS.forEach((t) => { if (game.metropolis[t] === idx) score += 2; }); // 大都市+2点（1人1系統まで）
+    TRACKS.forEach((t) => { if (metropolisOwner(game, t) === idx) score += 2; }); // 大都市+2点（1人1系統まで）
     score += (p.progressVp || 0) + (p.defenderVp || 0);
   }
   return score;
@@ -578,6 +580,7 @@ function advanceIdx(game, idx) { return (idx + 1) % game.playerCount; }
 // ---- 資源の産出 ----
 function distributeResources(game, total) {
   const ck = !!game.bank.commodities;
+  const before = game.players.map((p) => sumRes(p.resources) + sumCommodities(p.commodities));
   const demand = emptyResources();
   const contributions = [];
   const commodityDemand = emptyCommodities();
@@ -634,6 +637,16 @@ function distributeResources(game, total) {
     });
   }
   game.pendingGoldPicks = Object.entries(goldDemand).map(([player, count]) => ({ player: Number(player), count }));
+  // 科学3段階目: この目で自分に資源・商品が1枚も入らなかった人は、あとで好きな資源を1枚選べる
+  // （金の川で選べる人は、あとで資源が入るので対象外）
+  game.pendingScienceBonus = game.players
+    .map((p, idx) => idx)
+    .filter((idx) => {
+      const p = game.players[idx];
+      if (!p.cityImprovements || p.cityImprovements.science < 3) return false;
+      if (game.pendingGoldPicks.some((d) => d.player === idx)) return false;
+      return sumRes(p.resources) + sumCommodities(p.commodities) === before[idx];
+    });
 }
 
 // 金の川マスの枚数ぶん、好きな資源を選んで受け取る
@@ -649,7 +662,19 @@ export function pickGold(game, playerIdx, resources) {
   payCost(game.bank.resources, need);
   resources.forEach((r) => { game.players[playerIdx].resources[r]++; });
   game.pendingGoldPicks = game.pendingGoldPicks.filter((d) => d.player !== playerIdx);
-  if (!game.pendingGoldPicks.length) game.phase = 'main';
+  if (!game.pendingGoldPicks.length) game.phase = game.pendingScienceBonus.length ? 'scienceBonus' : 'main';
+  fire(game, 'build');
+  return true;
+}
+
+// 都市と騎士(科学3段階目): 何も入らなかった目のぶん、好きな資源を1枚もらう
+export function pickScienceBonus(game, playerIdx, res) {
+  if (!game.pendingScienceBonus || !game.pendingScienceBonus.includes(playerIdx)) return false;
+  if (!RESOURCES.includes(res) || game.bank.resources[res] <= 0) return false;
+  game.bank.resources[res]--;
+  game.players[playerIdx].resources[res]++;
+  game.pendingScienceBonus = game.pendingScienceBonus.filter((i) => i !== playerIdx);
+  if (!game.pendingScienceBonus.length && game.phase === 'scienceBonus') game.phase = 'main';
   fire(game, 'build');
   return true;
 }
@@ -675,7 +700,7 @@ export function rollDice(game, rng = Math.random) {
     else game.phase = (ck && !game.barbarianAttacked) ? 'main' : 'moveRobber'; // 最初の蛮族襲来までは盗賊が動かない
   } else {
     distributeResources(game, total);
-    game.phase = game.pendingGoldPicks.length ? 'goldPick' : 'main';
+    game.phase = game.pendingGoldPicks.length ? 'goldPick' : (game.pendingScienceBonus.length ? 'scienceBonus' : 'main');
   }
   return total;
 }
@@ -975,6 +1000,30 @@ export function bankTrade(game, giveRes, wantRes) {
   fire(game, 'trade');
   return true;
 }
+// ---- 都市と騎士(交易3段階目): 商品2枚で、銀行から好きな資源か商品を1枚もらう ----
+export function canTradeCommodity(game, playerIdx, giveCommodity) {
+  if (game.phase !== 'main') return false;
+  const p = game.players[playerIdx];
+  if (!p.cityImprovements || p.cityImprovements.trade < 3) return false;
+  if (!COMMODITIES.includes(giveCommodity)) return false;
+  return (p.commodities[giveCommodity] || 0) >= 2;
+}
+export function tradeCommodity(game, giveCommodity, wantKind, wantKey) {
+  const idx = currentPlayer(game);
+  if (!canTradeCommodity(game, idx, giveCommodity)) return false;
+  const p = game.players[idx];
+  if (wantKind === 'resource') {
+    if (!RESOURCES.includes(wantKey) || game.bank.resources[wantKey] <= 0) return false;
+    p.commodities[giveCommodity] -= 2; game.bank.commodities[giveCommodity] += 2;
+    p.resources[wantKey]++; game.bank.resources[wantKey]--;
+  } else if (wantKind === 'commodity') {
+    if (!COMMODITIES.includes(wantKey) || game.bank.commodities[wantKey] <= 0) return false;
+    p.commodities[giveCommodity] -= 2; game.bank.commodities[giveCommodity] += 2;
+    p.commodities[wantKey]++; game.bank.commodities[wantKey]--;
+  } else return false;
+  fire(game, 'trade');
+  return true;
+}
 export function playerTrade(game, otherIdx, give, get) {
   if (game.phase !== 'main') return false; // 特別建設フェイズでは交易できない
   const idx = currentPlayer(game);
@@ -991,7 +1040,6 @@ export function playerTrade(game, otherIdx, give, get) {
 // ================================================================
 // 都市と騎士
 // ================================================================
-export const MAX_KNIGHTS_PER_PLAYER = MAX_KNIGHTS;
 export const MAX_CITY_WALLS = MAX_WALLS;
 
 function vertexHasAnyKnight(game, vertexId) {
@@ -999,8 +1047,23 @@ function vertexHasAnyKnight(game, vertexId) {
 }
 function knightActionAvailable(game, k) { return k.active && k.actedTurn !== game.turnNumber; }
 function nextKnightId(p) { return p.knights.length ? Math.max(...p.knights.map((k) => k.id)) + 1 : 1; }
+function knightCountAtLevel(p, level) { return p.knights.filter((k) => k.level === level).length; }
 
 // ---- 都市の発展（交易・政治・科学の3系統×5段階） ----
+// 大都市は特定の1都市に置く（どの都市かは、その系統の資源を産む地形に接する都市を優先し、なければ先頭の都市にする）
+const TRACK_TERRAIN = { trade: 'pasture', politics: 'mountains', science: 'forest' };
+function pickMetropolisCity(game, idx, track) {
+  const p = game.players[idx];
+  const terrain = TRACK_TERRAIN[track];
+  const preferred = p.cities.find((vid) => game.board.vertices[vid].hexIds.some((h) => game.board.hexes[h].terrain === terrain));
+  return preferred != null ? preferred : p.cities[0];
+}
+export function metropolisOwner(game, track) {
+  const vid = game.metropolis && game.metropolis[track];
+  if (vid == null) return null;
+  const v = game.board.vertices[vid];
+  return v.building ? v.building.owner : null;
+}
 export function cityImprovementCost(nextLevel) { return nextLevel; } // 段階nへ上げるコストは、その系統の商品n枚
 export function canImproveCity(game, playerIdx, track) {
   if (!canBuildNow(game)) return false;
@@ -1022,12 +1085,13 @@ export function improveCity(game, track) {
   fire(game, 'build');
   log(game, `プレイヤー${idx + 1}が${TRACK_LABEL[track]}を${p.cityImprovements[track]}段階にした`);
   if (p.cityImprovements[track] >= 4) {
-    const holder = game.metropolis[track];
-    if (holder == null) {
-      game.metropolis[track] = idx;
+    const holderVertex = game.metropolis[track];
+    const holderIdx = holderVertex != null ? game.board.vertices[holderVertex].building?.owner : null;
+    if (holderVertex == null) {
+      game.metropolis[track] = pickMetropolisCity(game, idx, track);
       log(game, `プレイヤー${idx + 1}が${TRACK_LABEL[track]}の大都市を得た`);
-    } else if (holder !== idx && game.players[holder].cityImprovements[track] < 5 && p.cityImprovements[track] > game.players[holder].cityImprovements[track]) {
-      game.metropolis[track] = idx; // 持ち主が5段階目に届いていなければ、上回った人が奪える（5段階目なら奪われない）
+    } else if (holderIdx !== idx && game.players[holderIdx].cityImprovements[track] < 5 && p.cityImprovements[track] > game.players[holderIdx].cityImprovements[track]) {
+      game.metropolis[track] = pickMetropolisCity(game, idx, track); // 持ち主が5段階目に届いていなければ、上回った人が奪える（5段階目なら奪われない）。印だけ移り、元の都市はただの都市に戻る
       log(game, `プレイヤー${idx + 1}が${TRACK_LABEL[track]}の大都市を奪った`);
     }
   }
@@ -1057,7 +1121,7 @@ export function buildWall(game) {
 // ---- 騎士: 建てる・起動・昇格 ----
 export function canPlaceKnight(game, vertexId, playerIdx) {
   const p = game.players[playerIdx];
-  if (!p.knights || p.knights.length >= MAX_KNIGHTS) return false;
+  if (!p.knights || knightCountAtLevel(p, 1) >= MAX_KNIGHTS_PER_LEVEL) return false;
   const v = game.board.vertices[vertexId];
   if (v.building || vertexHasAnyKnight(game, vertexId)) return false;
   return v.edgeIds.some((eId) => game.board.edges[eId].road === playerIdx);
@@ -1099,6 +1163,7 @@ export function canUpgradeKnight(game, playerIdx, knightId) {
   const k = p.knights && p.knights.find((x) => x.id === knightId);
   if (!k || k.level >= 3) return false;
   if (k.level === 2 && (p.cityImprovements.politics || 0) < 3) return false; // 最強にするには政治3段階目以上
+  if (knightCountAtLevel(p, k.level + 1) >= MAX_KNIGHTS_PER_LEVEL) return false; // 昇格先の段階も2体まで
   return canAfford(p.resources, KNIGHT_COST);
 }
 export function upgradeKnight(game, knightId) {
@@ -1262,6 +1327,7 @@ function applyProgressCard(game, idx, id, params) {
     case 'po_upgradefree': {
       const k = params.knightId != null && p.knights.find((x) => x.id === params.knightId);
       if (!k || k.level >= 3 || (k.level === 2 && (p.cityImprovements.politics || 0) < 3)) return false;
+      if (knightCountAtLevel(p, k.level + 1) >= MAX_KNIGHTS_PER_LEVEL) return false;
       k.level++; return true;
     }
     case 'po_deserter': {
@@ -1352,11 +1418,12 @@ function resolveBarbarianAttack(game) {
     }
   } else {
     const min = Math.min(...strength);
+    const metropolisVertices = new Set(TRACKS.map((t) => game.metropolis[t]).filter((v) => v != null));
     game.players.forEach((p, idx) => {
       if (strength[idx] !== min) return;
-      const protectedCount = TRACKS.filter((t) => game.metropolis[t] === idx).length; // 大都市の数だけ守られる（簡略化）
-      if (p.cities.length - protectedCount <= 0) return;
-      const vid = p.cities.shift();
+      const vid = p.cities.find((v) => !metropolisVertices.has(v)); // 大都市の置かれた都市は守られる
+      if (vid == null) return;
+      p.cities = p.cities.filter((v) => v !== vid);
       p.settlements.push(vid);
       game.board.vertices[vid].building = { owner: idx, type: 'settlement' };
       log(game, `プレイヤー${idx + 1}の都市が1つ開拓地に戻った（蛮族に敗れた）`);

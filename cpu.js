@@ -80,6 +80,16 @@ export function pickGoldFor(game, playerIdx) {
   return E.pickGold(game, playerIdx, picks); // 銀行が足りなければ picks は pending.count より少なくなる（それでよい）
 }
 
+// ---- 都市と騎士(科学3段階目): 何も入らなかった目のぶん、足りない資源を選ぶ ----
+export function pickScienceBonusFor(game, playerIdx) {
+  if (!game.pendingScienceBonus || !game.pendingScienceBonus.includes(playerIdx)) return false;
+  const p = game.players[playerIdx];
+  const avail = E.RESOURCES.filter((r) => game.bank.resources[r] > 0);
+  if (!avail.length) { game.pendingScienceBonus = game.pendingScienceBonus.filter((i) => i !== playerIdx); return true; }
+  const r = avail.sort((a, b) => (p.resources[a] || 0) - (p.resources[b] || 0))[0];
+  return E.pickScienceBonus(game, playerIdx, r);
+}
+
 // ---- 捨て札（7が出たとき） ----
 export function discardFor(game, playerIdx, level) {
   const pending = game.pendingDiscards.find((d) => d.player === playerIdx);
@@ -445,21 +455,36 @@ function playEasyProgressCards(game, idx) {
   }
   return false;
 }
+// 弱い・強い・最強、各段階2体まで。よわいCPUは弱い騎士を1体持てば十分、ふつう・つよいは育てていく。
+function knightsAtLevel(p, lv) { return p.knights.filter((k) => k.level === lv).length; }
 function ckStep(game, idx, level) {
   const p = game.players[idx];
   if (!p.cityImprovements) return false; // 都市と騎士を使っていない対局では何もしない
   if (playEasyProgressCards(game, idx)) return true;
-  const cap = level === 'weak' ? 1 : (level === 'normal' ? 2 : E.MAX_KNIGHTS_PER_PLAYER);
-  if (p.cities.length && p.knights.length < cap && affordable(p.resources, E.KNIGHT_COST)) {
+  const weakCap = level === 'weak' ? 1 : E.MAX_KNIGHTS_PER_LEVEL;
+  if (p.cities.length && knightsAtLevel(p, 1) < weakCap && affordable(p.resources, E.KNIGHT_COST)) {
     const vs = E.availableKnightVertices(game, idx);
     if (vs.length) return E.buildKnight(game, pick(vs));
   }
   const inactive = p.knights.find((k) => !k.active);
   if (inactive && affordable(p.resources, E.KNIGHT_ACTIVATE_COST)) return E.activateKnight(game, inactive.id);
   if (level !== 'weak') {
+    // 昇格: 低い段階から順に、空きがあって資源があれば昇格する（最強は政治3段階目以上が要る）
+    const upgradable = p.knights.find((k) => k.level < 3
+      && !(k.level === 2 && (p.cityImprovements.politics || 0) < 3)
+      && knightsAtLevel(p, k.level + 1) < E.MAX_KNIGHTS_PER_LEVEL);
+    if (upgradable && affordable(p.resources, E.KNIGHT_COST)) return E.upgradeKnight(game, upgradable.id);
     const tracks = E.TRACKS.filter((t) => E.canImproveCity(game, idx, t));
     if (tracks.length) return E.improveCity(game, pick(tracks));
     if (E.canBuildWall(game, idx)) return E.buildWall(game);
+    // 交易3段階目: 余っている商品を2枚で、足りない資源に替える
+    if (p.cityImprovements.trade >= 3) {
+      const give = E.COMMODITIES.find((c) => (p.commodities[c] || 0) >= 2);
+      if (give) {
+        const want = worstResource(p.resources);
+        if (E.tradeCommodity(game, give, 'resource', want)) return true;
+      }
+    }
   }
   return false;
 }
