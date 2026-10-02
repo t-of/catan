@@ -221,7 +221,9 @@ syncExpansionPicker();
 // ---- 席ごとの人／CPU選び ----
 // uiSeats: タイトル画面で編集中の下書き（4席ぶん持っておき、人数に合わせて先頭から使う）。
 // seats: 今プレイ中（続きから、を含む）の対局で実際に使っている席の設定。古い保存（席の情報がない）は全員「人」として引き継ぐ。
-function defaultSeat(i) { return { type: i === 0 ? 'human' : 'cpu', level: 'normal' }; }
+function defaultSeat(i) { return { type: i === 0 ? 'human' : 'cpu', level: 'normal', name: '' }; }
+// 記号を抜いて10文字までに切る（表示にそのまま出すので、タグになりうる文字は使わせない）
+function sanitizeName(s) { return String(s || '').replace(/[<>&"']/g, '').trim().slice(0, 10); }
 const SEAT_SLOTS = [0, 1, 2, 3, 4, 5];
 let uiSeats = load('seats', null) || SEAT_SLOTS.map(defaultSeat);
 if (!Array.isArray(uiSeats) || uiSeats.length < 6) uiSeats = SEAT_SLOTS.map((i) => uiSeats[i] || defaultSeat(i));
@@ -236,7 +238,7 @@ function renderSeatsPanel() {
     const seat = uiSeats[i];
     const row = document.createElement('div');
     row.className = 'seat-row';
-    row.innerHTML = `<span class="seat-row__name">P${i + 1}</span>
+    row.innerHTML = `<input class="seat-row__name" data-i="${i}" maxlength="10" inputmode="text">
       <div class="segmented seat-row__type">
         <button class="btn" data-i="${i}" data-type="human">人</button>
         <button class="btn" data-i="${i}" data-type="cpu">CPU</button>
@@ -244,6 +246,9 @@ function renderSeatsPanel() {
       <div class="segmented seat-row__level"${seat.type === 'cpu' ? '' : ' hidden'}>
         ${CPU.LEVELS.map((l) => `<button class="btn" data-i="${i}" data-level="${l.id}">${l.name}</button>`).join('')}
       </div>`;
+    const nameInput = row.querySelector('.seat-row__name');
+    nameInput.placeholder = `プレイヤー${i + 1}`;
+    nameInput.value = seat.name || '';
     row.querySelector('[data-type="human"]').classList.toggle('is-selected', seat.type === 'human');
     row.querySelector('[data-type="cpu"]').classList.toggle('is-selected', seat.type === 'cpu');
     row.querySelectorAll('[data-level]').forEach((b) => b.classList.toggle('is-selected', b.dataset.level === seat.level));
@@ -259,12 +264,22 @@ els.seatsPanel.addEventListener('click', (e) => {
   save('seats', uiSeats);
   renderSeatsPanel();
 });
+// 名前欄だけは打つたびに作り直すと消えるので、キー入力では再描画せず保存だけする
+els.seatsPanel.addEventListener('change', (e) => {
+  const input = e.target.closest('.seat-row__name');
+  if (!input) return;
+  const name = sanitizeName(input.value);
+  uiSeats[Number(input.dataset.i)].name = name;
+  input.value = name;
+  save('seats', uiSeats);
+});
 renderSeatsPanel();
 
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
   const expansions = playerCount <= 4 && expansion !== 'none' ? [expansion] : [];
-  game = E.createGame(playerCount, Math.random, { expansions, scenario });
+  const names = seats.map((s) => s.name);
+  game = E.createGame(playerCount, Math.random, { expansions, scenario, names });
   ui = { mode: modeForPhase(), data: {} };
   showGame();
   save('game', game);
@@ -277,7 +292,7 @@ function migrateGame(g) {
   g.pendingGoldPicks = g.pendingGoldPicks || [];
   g.pendingScienceBonus = g.pendingScienceBonus || [];
   g.shipMovedThisTurn = !!g.shipMovedThisTurn;
-  g.players.forEach((p) => { p.ships = p.ships || []; p.islandBonus = !!p.islandBonus; });
+  g.players.forEach((p, i) => { p.ships = p.ships || []; p.islandBonus = !!p.islandBonus; p.name = p.name || `プレイヤー${i + 1}`; });
   // 古い保存（交易と略奪より前）には scenario などがないので、「なし」として引き継ぐ
   g.scenario = g.scenario || null;
   g.richPlayer = g.richPlayer ?? null;
@@ -827,7 +842,7 @@ function renderPlayers() {
     if (game.longestRoadPlayer === i) bonus.push('最長路');
     if (game.largestArmyPlayer === i) bonus.push('騎士団');
     const cpuTag = isCpuSeat(i) ? `CPU・${CPU.LEVELS.find((l) => l.id === seatLevel(i))?.name || ''}` : '人';
-    body.innerHTML = `<div class="player-card__name">P${i + 1}${i === idx ? '<span class="player-card__cur">手番</span>' : ''}</div>`
+    body.innerHTML = `<div class="player-card__name"><span class="player-card__nametext">${p.name}</span>${i === idx ? '<span class="player-card__cur">手番</span>' : ''}</div>`
       + `<div class="player-card__sub">${cpuTag}・手札 ${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)}・騎士 ${p.knightsPlayed}</div>`
       + `<div class="player-card__extra">${bonus.join(' ')}</div>`;
     const vp = document.createElement('div');
@@ -969,16 +984,16 @@ function renderDice() {
 function renderBanner() {
   const idx = E.currentPlayer(game);
   let main = '', hint = '';
-  if (game.winner != null) main = `プレイヤー${game.winner + 1}の勝ち！`;
+  if (game.winner != null) main = `${game.players[game.winner].name}の勝ち！`;
   else if (game.phase === 'setup1' || game.phase === 'setup2') {
-    main = `プレイヤー${idx + 1}の番。`;
+    main = `${game.players[idx].name}の番。`;
     hint = game.setupPending === 'road' ? '道を置く場所をタップ。' : '開拓地を置く場所をタップ。';
-  } else if (game.phase === 'roll') { main = `プレイヤー${idx + 1}の手番。`; hint = 'サイコロを振ってください。'; }
-  else if (game.phase === 'discard') { main = `プレイヤー${game.pendingDiscards[0].player + 1}は${game.pendingDiscards[0].count}枚捨てます。`; hint = '窓で捨てる資源を選んでください。'; }
-  else if (game.phase === 'goldPick') { main = `プレイヤー${game.pendingGoldPicks[0].player + 1}は金の川で${game.pendingGoldPicks[0].count}枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
-  else if (game.phase === 'scienceBonus') { main = `プレイヤー${game.pendingScienceBonus[0] + 1}は科学の力で資源を1枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
-  else if (game.phase === 'moveRobber') { main = `プレイヤー${idx + 1}の番。`; hint = '盗賊か海賊を動かすタイルをタップ。'; }
-  else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: プレイヤー${idx + 1}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
+  } else if (game.phase === 'roll') { main = `${game.players[idx].name}の手番。`; hint = 'サイコロを振ってください。'; }
+  else if (game.phase === 'discard') { main = `${game.players[game.pendingDiscards[0].player].name}は${game.pendingDiscards[0].count}枚捨てます。`; hint = '窓で捨てる資源を選んでください。'; }
+  else if (game.phase === 'goldPick') { main = `${game.players[game.pendingGoldPicks[0].player].name}は金の川で${game.pendingGoldPicks[0].count}枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
+  else if (game.phase === 'scienceBonus') { main = `${game.players[game.pendingScienceBonus[0]].name}は科学の力で資源を1枚選びます。`; hint = '窓で好きな資源を選んでください。'; }
+  else if (game.phase === 'moveRobber') { main = `${game.players[idx].name}の番。`; hint = '盗賊か海賊を動かすタイルをタップ。'; }
+  else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: ${game.players[idx].name}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
   if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
   if (ui.mode === 'buildRoad') hint = '道を置く場所をタップ。';
@@ -1171,7 +1186,7 @@ function renderPanel() {
 }
 
 function renderWinPanel() {
-  els.panel.innerHTML = `<h2>プレイヤー${game.winner + 1}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>
+  els.panel.innerHTML = `<h2>${game.players[game.winner].name}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>
     <button class="btn btn--accent" data-act="close">とじる</button>`;
   bindPanel({ close: () => { closePanel(); } });
 }
@@ -1189,7 +1204,7 @@ function renderDiscardPanel(d) {
   const p = game.players[d.player];
   const picked = ui.data.discardPicked || (ui.data.discardPicked = E.RESOURCES.reduce((o, r) => ({ ...o, [r]: 0 }), {}));
   const total = Object.values(picked).reduce((a, b) => a + b, 0);
-  els.panel.innerHTML = `<h2>プレイヤー${d.player + 1}: ${d.count}枚捨てる（あと${d.count - total}枚）</h2>`
+  els.panel.innerHTML = `<h2>${game.players[d.player].name}: ${d.count}枚捨てる（あと${d.count - total}枚）</h2>`
     + E.RESOURCES.map((r) => `<div class="sheet__row"><span class="res-pick__label" data-row="${r}">持ち${p.resources[r]}</span>
         <span class="stepper">
           <button data-act="dec" data-res="${r}">−</button><b>${picked[r]}</b>
@@ -1215,7 +1230,7 @@ function renderDiscardPanel(d) {
 
 function renderGoldPickPanel(d) {
   const picked = ui.data.goldPicked || (ui.data.goldPicked = []);
-  els.panel.innerHTML = `<h2>プレイヤー${d.player + 1}: 金の川で好きな資源を${d.count}枚選ぶ（あと${d.count - picked.length}枚）</h2>
+  els.panel.innerHTML = `<h2>${game.players[d.player].name}: 金の川で好きな資源を${d.count}枚選ぶ（あと${d.count - picked.length}枚）</h2>
     <div class="res-pick" data-row="pick"></div>
     <p>選んだ: ${picked.length ? '' : 'なし'}</p>
     <button class="btn btn--accent" data-act="confirm" ${picked.length === d.count ? '' : 'disabled'}>受け取る</button>`;
@@ -1239,7 +1254,7 @@ function renderGoldPickPanel(d) {
 
 // 都市と騎士(科学3段階目): この目で何も入らなかった人が、好きな資源を1枚選ぶ
 function renderScienceBonusPanel(playerIdx) {
-  els.panel.innerHTML = `<h2>プレイヤー${playerIdx + 1}: 科学の力で好きな資源を1枚選ぶ</h2>
+  els.panel.innerHTML = `<h2>${game.players[playerIdx].name}: 科学の力で好きな資源を1枚選ぶ</h2>
     <div class="res-pick" data-row="pick"></div>`;
   fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => {
     b.appendChild(resIcon(r));
@@ -1259,7 +1274,7 @@ function renderScienceBonusPanel(playerIdx) {
 function renderCamelVotePanel(playerIdx) {
   const p = game.players[playerIdx];
   const bid = ui.data.camelBid || (ui.data.camelBid = { wheat: 0, sheep: 0 });
-  els.panel.innerHTML = `<h2>プレイヤー${playerIdx + 1}の投票（ラクダの置き場所）</h2>
+  els.panel.innerHTML = `<h2>${game.players[playerIdx].name}の投票（ラクダの置き場所）</h2>
     <p style="opacity:.8">羊・麦を出すほど、その人の意見が通りやすくなります。出さなくても参加できます。</p>
     <div class="sheet__row"><span>麦</span><div class="stepper">
       <button class="ghost-btn" data-act="wdec">−</button><b>${bid.wheat}</b><button class="ghost-btn" data-act="winc" ${bid.wheat < p.resources.wheat ? '' : 'disabled'}>＋</button>
@@ -1284,7 +1299,7 @@ function renderCamelVotePanel(playerIdx) {
 function renderBarbarianStealPanel(idx) {
   const targets = E.barbarianStealTargets(game, idx);
   els.panel.innerHTML = `<h2>誰から奪う？</h2>`
-    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">プレイヤー${t + 1}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
+    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">${game.players[t].name}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
       : `<button class="card-btn" data-act="pick" data-target="">誰も奪えない</button>`);
   bindPanel({
     pick: (b) => {
@@ -1299,7 +1314,7 @@ function renderRobberTargetPanel(hexId, forDev) {
   const idx = E.currentPlayer(game);
   const targets = E.banditTargets(game, hexId, idx);
   els.panel.innerHTML = `<h2>誰から奪う？</h2>`
-    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">プレイヤー${t + 1}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
+    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">${game.players[t].name}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
       : `<button class="card-btn" data-act="pick" data-target="">誰も奪えない</button>`);
   bindPanel({
     pick: (b) => {
@@ -1396,9 +1411,9 @@ function renderTradeMenu() {
         // CPUが相手のときは、成立させる前に受けるか断るかを決める（人の手札は見ず、今回の内容だけで判断）
         if (CPU.acceptTrade(game, other, pGive, pGet, seatLevel(other))) {
           E.playerTrade(game, other, pGive, pGet);
-          game.log.push(`プレイヤー${other + 1}が交易を受けました`);
+          game.log.push(`${game.players[other].name}が交易を受けました`);
         } else {
-          game.log.push(`プレイヤー${other + 1}は交易を断りました`);
+          game.log.push(`${game.players[other].name}は交易を断りました`);
         }
       } else {
         E.playerTrade(game, other, pGive, pGet);
@@ -1438,7 +1453,7 @@ function fillOtherPick(container, other, act) {
     const b = document.createElement('button');
     b.dataset.act = act || 'other'; b.dataset.p = i;
     if (i === other) b.classList.add('is-selected');
-    b.textContent = `プレイヤー${i + 1}` + (isCpuSeat(i) ? '（CPU）' : '');
+    b.textContent = `${game.players[i].name}` + (isCpuSeat(i) ? '（CPU）' : '');
     container.appendChild(b);
   });
 }
@@ -1593,7 +1608,7 @@ function renderKnightExpelPanel() {
   const targets = E.expellableTargets(game, idx, ui.data.knightId);
   const rows = targets.map((t, i) => {
     const k = game.players[t.ownerIdx].knights.find((x) => x.id === t.knightId);
-    return `<button class="card-btn" data-act="pick" data-i="${i}">プレイヤー${t.ownerIdx + 1}の${E.KNIGHT_LEVEL_LABEL[k.level]}</button>`;
+    return `<button class="card-btn" data-act="pick" data-i="${i}">${game.players[t.ownerIdx].name}の${E.KNIGHT_LEVEL_LABEL[k.level]}</button>`;
   }).join('') || '<p>追い出せる騎士がいません</p>';
   els.panel.innerHTML = `<h2>騎士を追い出す</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
   bindPanel({
@@ -1737,7 +1752,7 @@ function renderProgressKnightTargetPanel() {
       list.push({ ownerIdx: oi, knightId: k.id, level: k.level });
     });
   });
-  const rows = list.map((t, i) => `<button class="card-btn" data-act="pick" data-i="${i}">プレイヤー${t.ownerIdx + 1}の${E.KNIGHT_LEVEL_LABEL[t.level]}</button>`).join('') || '<p>対象がいません</p>';
+  const rows = list.map((t, i) => `<button class="card-btn" data-act="pick" data-i="${i}">${game.players[t.ownerIdx].name}の${E.KNIGHT_LEVEL_LABEL[t.level]}</button>`).join('') || '<p>対象がいません</p>';
   els.panel.innerHTML = `<h2>${E.PROGRESS_LABEL[card.id]}</h2>${rows}<button class="ghost-btn" data-act="cancel">やめる</button>`;
   bindPanel({
     pick: (b) => {

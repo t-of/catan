@@ -1033,3 +1033,14 @@ test('交易と略奪・蛮族の襲撃: CPUだけで4人、数局きちんと�
     assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
   }
 });
+
+test('プレイヤー名: 指定すればログに使われ、空ならプレイヤーNのまま', () => {
+  const g = E.createGame(3, Math.random, { names: ['あやか', '', 'CPUくん'] });
+  assert.equal(g.players[0].name, 'あやか');
+  assert.equal(g.players[1].name, 'プレイヤー2'); // 空なら既定の名前
+  assert.equal(g.players[2].name, 'CPUくん');
+  assert.equal(E.playerName(g, 0), 'あやか');
+  // 名前のない古いセーブ相当（player.name が undefined）でも既定名で動く
+  delete g.players[2].name;
+  assert.equal(E.playerName(g, 2), 'プレイヤー3');
+});

@@ -464,8 +464,10 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   if (scenario === 'rivers') applyRiver(board);
   else if (scenario === 'barbarians') applyBarbarianBoard(board, rng);
   const bankStart = ext ? BANK_START_56 : BANK_START;
+  const names = options.names || [];
   const players = Array.from({ length: playerCount }, (_, i) => ({
     idx: i,
+    name: names[i] || `プレイヤー${i + 1}`,
     color: PLAYER_COLORS[i],
     resources: emptyResources(),
     roads: [], settlements: [], cities: [], ships: [],
@@ -554,6 +556,8 @@ export function actingPlayer(game) {
 }
 
 function log(game, text) { game.log.push(text); if (game.log.length > 200) game.log.shift(); }
+// 名前を付けていない古い保存にも対応できるよう、無ければ「プレイヤーN」を返す
+export function playerName(game, idx) { return (game.players[idx] && game.players[idx].name) || `プレイヤー${idx + 1}`; }
 function fire(game, evt) { game.events.push(evt); }
 
 // ---- 得点 ----
@@ -591,7 +595,7 @@ export function winTargetFor(game, idx) {
 }
 function checkWin(game, idx) {
   if (game.winner != null) return;
-  if (playerScore(game, idx) >= winTargetFor(game, idx)) { game.winner = idx; game.phase = 'gameOver'; fire(game, 'win'); log(game, `プレイヤー${idx + 1}の勝ち！`); }
+  if (playerScore(game, idx) >= winTargetFor(game, idx)) { game.winner = idx; game.phase = 'gameOver'; fire(game, 'win'); log(game, `${playerName(game, idx)}の勝ち！`); }
 }
 // 古い靴・富豪・貧者・ラクダの印など、自分では何も建てていない人の得点(に要る点)を変えることがあるので、
 // ここで全員ぶん checkWin をかけ直す(でないと、その人が次に何か建てるまで勝利が見逃される)
@@ -611,7 +615,7 @@ function markIslandBonus(game, idx, vertexId) {
   const v = game.board.vertices[vertexId];
   if (!v.hexIds.some((h) => game.board.islandHexIds.has(h))) return;
   game.players[idx].islandBonus = true;
-  log(game, `プレイヤー${idx + 1}が新しい島に開拓地を建てた（+2点）`);
+  log(game, `${playerName(game, idx)}が新しい島に開拓地を建てた（+2点）`);
   checkWin(game, idx);
 }
 
@@ -746,7 +750,7 @@ export function setupPlaceSettlement(game, vertexId) {
   game.setupLastVertex = vertexId;
   game.setupPending = 'road';
   fire(game, 'build');
-  log(game, `プレイヤー${idx + 1}が開拓地を置いた`);
+  log(game, `${playerName(game, idx)}が開拓地を置いた`);
   return true;
 }
 export function setupPlaceRoad(game, edgeId) {
@@ -1018,7 +1022,7 @@ export function moveRobber(game, hexId, targetPlayerIdx) {
   const targets = isWater ? pirateTargets(game, hexId, idx) : robberTargets(game, hexId, idx);
   if (targets.length && !targets.includes(targetPlayerIdx)) return false;
   if (isWater) game.board.pirateHex = hexId; else game.board.robberHex = hexId;
-  if (targets.length) { stealFrom(game, targetPlayerIdx, idx); log(game, `プレイヤー${idx + 1}がプレイヤー${targetPlayerIdx + 1}から1枚奪った`); }
+  if (targets.length) { stealFrom(game, targetPlayerIdx, idx); log(game, `${playerName(game, idx)}が${playerName(game, targetPlayerIdx)}から1枚奪った`); }
   fire(game, 'rob');
   game.phase = 'main';
   return true;
@@ -1324,7 +1328,7 @@ function grantFishToken(game, idx) {
   const token = drawFishToken(game);
   if (token == null) return;
   if (token === 'boot') {
-    if (game.oldBootHolder == null) { game.oldBootHolder = idx; log(game, `プレイヤー${idx + 1}が古い靴を引いた`); }
+    if (game.oldBootHolder == null) { game.oldBootHolder = idx; log(game, `${playerName(game, idx)}が古い靴を引いた`); }
     checkWinAll(game);
     return;
   }
@@ -1653,7 +1657,7 @@ function resolveBarbarianLanding(game, playerIdx) {
     game.board.barbarianSupply--;
     if (hex.barbarians >= 3) conquerHex(game, hex);
   }
-  log(game, `プレイヤー${playerIdx + 1}が建てたので、蛮族が上陸した`);
+  log(game, `${playerName(game, playerIdx)}が建てたので、蛮族が上陸した`);
 }
 function conquerHex(game, hex) {
   hex.conquered = true;
@@ -1761,16 +1765,16 @@ export function improveCity(game, track) {
   game.bank.commodities[com] += cost;
   p.cityImprovements[track]++;
   fire(game, 'build');
-  log(game, `プレイヤー${idx + 1}が${TRACK_LABEL[track]}を${p.cityImprovements[track]}段階にした`);
+  log(game, `${playerName(game, idx)}が${TRACK_LABEL[track]}を${p.cityImprovements[track]}段階にした`);
   if (p.cityImprovements[track] >= 4) {
     const holderVertex = game.metropolis[track];
     const holderIdx = holderVertex != null ? game.board.vertices[holderVertex].building?.owner : null;
     if (holderVertex == null) {
       game.metropolis[track] = pickMetropolisCity(game, idx, track);
-      log(game, `プレイヤー${idx + 1}が${TRACK_LABEL[track]}の大都市を得た`);
+      log(game, `${playerName(game, idx)}が${TRACK_LABEL[track]}の大都市を得た`);
     } else if (holderIdx !== idx && game.players[holderIdx].cityImprovements[track] < 5 && p.cityImprovements[track] > game.players[holderIdx].cityImprovements[track]) {
       game.metropolis[track] = pickMetropolisCity(game, idx, track); // 持ち主が5段階目に届いていなければ、上回った人が奪える（5段階目なら奪われない）。印だけ移り、元の都市はただの都市に戻る
-      log(game, `プレイヤー${idx + 1}が${TRACK_LABEL[track]}の大都市を奪った`);
+      log(game, `${playerName(game, idx)}が${TRACK_LABEL[track]}の大都市を奪った`);
     }
   }
   checkWin(game, idx);
@@ -1902,7 +1906,7 @@ export function expelKnight(game, myKnightId, targetOwnerIdx, targetKnightId) {
   const op = game.players[targetOwnerIdx];
   op.knights = op.knights.filter((x) => x.id !== targetKnightId);
   fire(game, 'rob');
-  log(game, `プレイヤー${idx + 1}がプレイヤー${targetOwnerIdx + 1}の騎士を追い出した`);
+  log(game, `${playerName(game, idx)}が${playerName(game, targetOwnerIdx)}の騎士を追い出した`);
   return true;
 }
 // 盗賊に接する頂点にいる、起動中の騎士で盗賊を砂漠へ追い払う（その騎士は使うと休む）
@@ -1922,7 +1926,7 @@ export function chaseRobber(game, knightId) {
   const k = game.players[idx].knights.find((x) => x.id === knightId);
   k.active = false; k.actedTurn = game.turnNumber;
   fire(game, 'rob');
-  log(game, `プレイヤー${idx + 1}が騎士で盗賊を追い払った`);
+  log(game, `${playerName(game, idx)}が騎士で盗賊を追い払った`);
   return true;
 }
 
@@ -1935,7 +1939,7 @@ function drawProgressCard(game, idx, color) {
   if (PROGRESS_VP_CARDS.has(id)) {
     p.progressVp = (p.progressVp || 0) + 1;
     fire(game, 'buy-dev');
-    log(game, `プレイヤー${idx + 1}が勝利点の進歩カードを公開した（+1点）`);
+    log(game, `${playerName(game, idx)}が勝利点の進歩カードを公開した（+1点）`);
     checkWin(game, idx);
     return true;
   }
@@ -2086,7 +2090,7 @@ function resolveBarbarianAttack(game) {
     const winners = strength.map((s, i) => (s === max && s > 0 ? i : -1)).filter((i) => i >= 0);
     if (winners.length === 1) {
       game.players[winners[0]].defenderVp = (game.players[winners[0]].defenderVp || 0) + 1;
-      log(game, `プレイヤー${winners[0] + 1}が蛮族を退け、守護者の点+1`);
+      log(game, `${playerName(game, winners[0])}が蛮族を退け、守護者の点+1`);
       checkWin(game, winners[0]);
     } else if (winners.length > 1) {
       winners.forEach((i) => drawProgressCard(game, i, TRACKS[Math.floor(Math.random() * TRACKS.length)]));
@@ -2104,7 +2108,7 @@ function resolveBarbarianAttack(game) {
       p.cities = p.cities.filter((v) => v !== vid);
       p.settlements.push(vid);
       game.board.vertices[vid].building = { owner: idx, type: 'settlement' };
-      log(game, `プレイヤー${idx + 1}の都市が1つ開拓地に戻った（蛮族に敗れた）`);
+      log(game, `${playerName(game, idx)}の都市が1つ開拓地に戻った（蛮族に敗れた）`);
     });
     fire(game, 'rob');
   }
