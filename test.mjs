@@ -1245,6 +1245,70 @@ test('交易と略奪・蛮族の襲撃: CPUだけで4人、数局きちんと�
   }
 });
 
+// ---- 交易と略奪の5〜6人用拡張 ----
+test('交易と略奪×5〜6人: 本島30マス、銀行24枚、特別建設フェイズつき(全シナリオ)', () => {
+  for (const n of [5, 6]) {
+    for (const scenario of E.TB_SCENARIOS) {
+      const g = tbGame(scenario, n);
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'traders-barbarians']);
+      assert.equal(g.scenario, scenario);
+      assert.equal(g.board.hexes.length, 30);
+      assert.deepEqual(g.bank.resources, { wood: 24, brick: 24, sheep: 24, wheat: 24, ore: 24 });
+      assert.equal(g.winTarget, scenario === 'fishermen' || scenario === 'rivers' ? 10 : 12); // 勝利点はext抜きと同じ(README に注記)
+    }
+  }
+});
+
+test('交易と略奪×5〜6人・漁師: 漁場が増え(9か所)、魚トークンも増える(1匹14・2匹13・3匹10)', () => {
+  const g = tbGame('fishermen', 5);
+  assert.equal(g.board.fisheries.length, 9);
+  assert.equal(g.fishBag.length, 14 + 13 + 10 + 1); // +古い靴1枚
+  const lake = g.board.hexes.find((h) => h.terrain === 'lake');
+  assert.ok(lake);
+});
+
+test('交易と略奪×5〜6人・隊商: オアシスは内陸(6辺とも他マスに接する)で、3本の出発点を持つ', () => {
+  const g = tbGame('caravans', 6);
+  const oasis = g.board.hexes.find((h) => h.id === g.board.oasisHexId);
+  assert.ok(oasis.edgeIds.every((eId) => g.board.edges[eId].hexIds.length === 2));
+  assert.equal(g.board.camelStartEdges.length, 3);
+});
+
+test('交易と略奪×5〜6人・蛮族の襲撃: 砦は内陸で、蛮族の供給は36(近似)', () => {
+  const g = tbGame('barbarians', 6);
+  const castle = g.board.hexes.find((h) => h.id === g.board.castleHexId);
+  assert.ok(castle.edgeIds.every((eId) => g.board.edges[eId].hexIds.length === 2));
+  assert.ok(g.board.barbarianSupply >= 34 && g.board.barbarianSupply <= 36); // 出目2・12のマスに先置きした分だけ減ることがある
+});
+
+test('交易と略奪×5〜6人: 特別建設フェイズでも道・開拓地・都市、蛮族の襲撃なら騎士も建てられる', () => {
+  const g = tbGame('barbarians', 5);
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 3;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
+  const v = g.board.vertices.find((x) => x.edgeIds.length >= 2 && !x.building);
+  v.building = { owner: 2, type: 'settlement' };
+  g.players[2].settlements.push(v.id);
+  assert.ok(E.endTurn(g));
+  assert.equal(g.phase, 'specialBuilding');
+  const idx = E.currentPlayer(g);
+  const castleEdge = g.board.hexes[g.board.castleHexId].edgeIds[0];
+  assert.ok(E.buildWarKnight(g, castleEdge));
+  assert.equal(g.players[idx].warKnights.length, 1);
+});
+
+test('交易と略奪×5〜6人: CPUだけで5人・6人、各シナリオで数局きちんと決着する', () => {
+  for (const n of [5, 6]) {
+    const levels = n === 5 ? ['weak', 'normal', 'strong', 'weak', 'normal'] : ['weak', 'normal', 'strong', 'weak', 'normal', 'strong'];
+    for (const scenario of E.TB_SCENARIOS) {
+      const g = playOutCpu(levels, 1200000, { expansions: ['traders-barbarians'], scenario });
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'traders-barbarians']);
+      assert.equal(g.scenario, scenario);
+      assert.ok(g.winner != null);
+      assert.ok(E.playerScore(g, g.winner) >= g.winTarget);
+    }
+  }
+});
+
 // ---- サッカー熱 ----
 
 test('サッカー熱: 盤の準備（サッカー場2マス、出目12のマスに2のチップも足す、盗賊は盤の外、勝利点11点）', () => {

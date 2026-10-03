@@ -108,8 +108,11 @@ const TB_WIN_TARGET = { fishermen: 10, rivers: 10, caravans: 12, barbarians: 12 
 // 漁師: 漁場6か所（出目4,5,6,8,9,10）と、砂漠の代わりの湖（出目2,3,11,12のどれでも反応）。
 // 魚トークンは1匹11枚・2匹10枚・3匹8枚（計29枚）に古い靴1枚を混ぜ、産出のたびに引く（公式どおり）。
 const FISH_GROUND_NUMBERS = [4, 5, 6, 8, 9, 10];
+// 5〜6人拡張は近似（公式の正確な数は不明。銀行の資源が19→24になる比率=約1.3倍で増やした）。README に注記
+const FISH_GROUND_NUMBERS_56 = [4, 5, 5, 6, 6, 8, 8, 9, 10];
 const LAKE_NUMBERS = [2, 3, 11, 12];
 const FISH_TOKEN_COUNTS = { 1: 11, 2: 10, 3: 8 };
+const FISH_TOKEN_COUNTS_56 = { 1: 14, 2: 13, 3: 10 }; // 同じく近似（約1.3倍）
 const FISH_HAND_LIMIT = 7; // 一度に7匹まで（公式どおり。超える分は、一番少ない手持ちと交換するだけ）
 export const FISH_TRADE_COST = { robberAway: 2, steal: 3, resource: 4, road: 5, devcard: 7 };
 
@@ -374,37 +377,50 @@ function boundaryVertexLoop(edges) {
 }
 function hexIsCoastal(hex, board) { return hex.edgeIds.some((eId) => board.edges[eId].hexIds.length === 1); }
 
-// 漁師: 外周に6か所の漁場（出目4,5,6,8,9,10。それぞれ3つの頂点に接する）を置く
-function applyFishingGrounds(board, rng) {
+// 盤の真ん中にいちばん近い「内陸」マス（全6辺が他のマスと接するマス）。隊商のオアシス・蛮族の砦に使う。
+// 3〜4人の19マス盤では常に q=0,r=0 のマスと同じ結果になる（5〜6人の30マス盤にもそのまま使えるようにした）。
+function boardCenterHex(board) {
+  const interior = board.hexes.filter((h) => h.terrain !== 'water' && h.edgeIds.every((eId) => board.edges[eId].hexIds.length === 2));
+  const avgQ = interior.reduce((a, h) => a + h.q, 0) / interior.length;
+  const avgR = interior.reduce((a, h) => a + h.r, 0) / interior.length;
+  const dist = (h) => (h.q - avgQ) ** 2 + (h.r - avgR) ** 2;
+  return interior.reduce((best, h) => (dist(h) < dist(best) ? h : best));
+}
+
+// 漁師: 外周に漁場（出目4,5,6,8,9,10）を置く。5〜6人拡張は盤が広がるぶん数を増やす（近似。README に注記）
+function applyFishingGrounds(board, rng, ext) {
   const loop = boundaryVertexLoop(board.edges);
   const n = loop.length;
-  const numbers = shuffle(FISH_GROUND_NUMBERS, rng);
+  const numbers = shuffle(ext ? FISH_GROUND_NUMBERS_56 : FISH_GROUND_NUMBERS, rng);
   board.fisheries = []; // [{ vertices:[v,v,v], number }]
   numbers.forEach((num, i) => {
     const c = Math.round((i * n) / numbers.length);
     board.fisheries.push({ vertices: [loop[(c - 1 + n) % n], loop[c], loop[(c + 1) % n]], number: num });
   });
 }
-// 漁師: 砂漠を湖にする（公式どおり、湖は海岸に置けないので、砂漠が海岸のときは盤を作り直す）
-function buildFishermenBoard(rng) {
-  let board = buildBoard(rng, false);
-  let desert = board.hexes.find((h) => h.terrain === 'desert');
+// 漁師: 砂漠を湖にする（公式どおり、湖は海岸に置けないので、砂漠が海岸のときは盤を作り直す）。
+// 5〜6人拡張は砂漠が2つあるが、湖にするのは1つだけ（残りは普通の砂漠のまま。近似。README に注記）
+function buildFishermenBoard(rng, ext) {
+  let board = buildBoard(rng, ext);
+  let desert = board.hexes.find((h) => h.terrain === 'desert' && !hexIsCoastal(h, board));
   let attempt = 0;
-  while (hexIsCoastal(desert, board) && attempt < 50) {
-    board = buildBoard(rng, false);
-    desert = board.hexes.find((h) => h.terrain === 'desert');
+  while (!desert && attempt < 50) {
+    board = buildBoard(rng, ext);
+    desert = board.hexes.find((h) => h.terrain === 'desert' && !hexIsCoastal(h, board));
     attempt++;
   }
+  if (!desert) desert = board.hexes.find((h) => h.terrain === 'desert'); // 50回だめなら海岸でも受け入れる
   desert.terrain = 'lake';
   desert.lakeNumbers = LAKE_NUMBERS.slice();
   board.robberHex = null; // 盗賊は盤の外にいて、最初の7で初めて盤に入る
-  applyFishingGrounds(board, rng);
+  applyFishingGrounds(board, rng, ext);
   return board;
 }
-// 漁師: 魚トークンの山（1匹11・2匹10・3匹8＝29枚＋古い靴1枚）を混ぜて作る
-function buildFishBag(rng) {
+// 漁師: 魚トークンの山を混ぜて作る。5〜6人拡張は数を増やす（近似。README に注記）
+function buildFishBag(rng, ext) {
+  const counts = ext ? FISH_TOKEN_COUNTS_56 : FISH_TOKEN_COUNTS;
   const entries = [];
-  Object.entries(FISH_TOKEN_COUNTS).forEach(([v, n]) => { for (let i = 0; i < n; i++) entries.push(Number(v)); });
+  Object.entries(counts).forEach(([v, n]) => { for (let i = 0; i < n; i++) entries.push(Number(v)); });
   entries.push('boot');
   return shuffle(entries, rng);
 }
@@ -428,9 +444,9 @@ function applyRiver(board) {
 }
 
 // 隊商: 砂漠をオアシスとして盤の中心（必ず内陸）に固定し、周りの6辺のうち3つを各キャラバンの出発点にする
-function buildCaravansBoard(rng) {
-  const board = buildBoard(rng, false);
-  const center = board.hexes.find((h) => h.q === 0 && h.r === 0);
+function buildCaravansBoard(rng, ext) {
+  const board = buildBoard(rng, ext);
+  const center = boardCenterHex(board);
   const desert = board.hexes.find((h) => h.terrain === 'desert');
   if (center.id !== desert.id) {
     const ct = center.terrain, cn = center.number;
@@ -444,10 +460,12 @@ function buildCaravansBoard(rng) {
   return board;
 }
 
+const BARBARIAN_SUPPLY = 30;
+const BARBARIAN_SUPPLY_56 = 36; // 5〜6人拡張は近似（銀行の資源が19→24になる比率に近い約1.2倍。README に注記）
 // 蛮族の襲撃: 盤の中心を「砦」にする（産出せず、征服もされない。騎士は砦の6辺から出る）。
-// 本来の専用盤（砂漠+砦+沿岸の輪）は作らず、基本の19マスに砦を足す簡略化（README に注記）。
-function applyBarbarianBoard(board, rng) {
-  const castle = board.hexes.find((h) => h.q === 0 && h.r === 0);
+// 本来の専用盤（砂漠+砦+沿岸の輪）は作らず、基本の19マス（5〜6人は30マス）に砦を足す簡略化（README に注記）。
+function applyBarbarianBoard(board, rng, ext) {
+  const castle = boardCenterHex(board);
   const desert = board.hexes.find((h) => h.terrain === 'desert');
   if (castle.id !== desert.id) {
     // 砦に出目チップがあると2・12が盤から消えてしまうので、砂漠と入れ替えて数字チップを減らさない
@@ -463,7 +481,7 @@ function applyBarbarianBoard(board, rng) {
   const twelve = board.hexes.find((h) => h.id !== castle.id && h.number === 12);
   if (two) two.barbarians = 1;
   if (twelve) twelve.barbarians = 1;
-  board.barbarianSupply = 30 - (two ? 1 : 0) - (twelve ? 1 : 0);
+  board.barbarianSupply = (ext ? BARBARIAN_SUPPLY_56 : BARBARIAN_SUPPLY) - (two ? 1 : 0) - (twelve ? 1 : 0);
   board.robberHex = null; // このシナリオでは盗賊を使わない
 }
 function barbarianTargetHexes(board) { return board.hexes.filter((h) => h.id !== board.castleHexId && h.terrain !== 'desert'); }
@@ -514,8 +532,8 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   const ext = expansions.includes('5-6player');
   const seafarers = expansions.includes('seafarers');
   const ck = expansions.includes('cities-knights'); // 都市と騎士。5〜6人なら5〜6人拡張の盤に自動で変わる（航海者版との組み合わせは作っていない）
-  // 交易と略奪。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士との組み合わせは作っていない）
-  const tb = expansions.includes('traders-barbarians') && !ext && !seafarers && !ck;
+  // 交易と略奪。5〜6人なら5〜6人拡張の盤に自動で変わる（航海者版・都市と騎士との組み合わせは作っていない）
+  const tb = expansions.includes('traders-barbarians') && !seafarers && !ck;
   // サッカー熱。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士・交易と略奪との組み合わせは作っていない）
   const soccer = expansions.includes('soccer') && !ext && !seafarers && !ck && !tb;
   // 探検家と海賊。同じく3〜4人・航海者版と同じ盤だけで使う想定（他の拡張との組み合わせはありません）
@@ -524,12 +542,12 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   let board;
   if (seafarers) board = buildSeafarersBoard(rng, ext);
   else if (ep) board = buildExplorersBoard(rng);
-  else if (scenario === 'fishermen') board = buildFishermenBoard(rng);
-  else if (scenario === 'caravans') board = buildCaravansBoard(rng);
+  else if (scenario === 'fishermen') board = buildFishermenBoard(rng, ext);
+  else if (scenario === 'caravans') board = buildCaravansBoard(rng, ext);
   else if (soccer) board = buildSoccerBoard(rng);
   else board = buildBoard(rng, ext);
   if (scenario === 'rivers') applyRiver(board);
-  else if (scenario === 'barbarians') applyBarbarianBoard(board, rng);
+  else if (scenario === 'barbarians') applyBarbarianBoard(board, rng, ext);
   const bankStart = ext ? BANK_START_56 : BANK_START;
   const ckCommodityStart = ext ? CK_BANK_COMMODITY_START_56 : CK_BANK_COMMODITY_START;
   const names = options.names || [];
@@ -599,7 +617,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     richPlayer: null, // 川: 金貨が一番多い人だけ(+1点)
     poorPlayers: [], // 川: 金貨が一番少ない人たち（同点なら全員）(-2点ずつ)
     oldBootHolder: null, // 漁師: 古い靴を持つ人（勝利点が+1点多く要る）
-    fishBag: scenario === 'fishermen' ? buildFishBag(rng) : null, // 魚トークンの山（伏せて混ぜてある）
+    fishBag: scenario === 'fishermen' ? buildFishBag(rng, ext) : null, // 魚トークンの山（伏せて混ぜてある）
     fishUsed: scenario === 'fishermen' ? [] : null, // 使った魚トークン（山が尽きたら混ぜ直す）
     pendingCamelVote: null, // 隊商: 投票中の情報 { order, idx, bids, remaining }
     tbBarbarianAttacksDone: 0,

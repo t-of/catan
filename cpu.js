@@ -400,13 +400,14 @@ function specialBuildStep(game, level) {
   const p = game.players[idx];
   if (level === 'weak') {
     const opts = [];
-    if (p.roads.length < 15 && affordable(p.resources, E.COSTS.road) && E.availableRoadEdges(game, idx).length) opts.push('road');
+    const roadEdges = E.availableRoadEdges(game, idx).filter((e) => affordableRoadEdge(game, idx, e));
+    if (p.roads.length < 15 && roadEdges.length) opts.push('road');
     if (p.settlements.length < 5 && affordable(p.resources, E.COSTS.settlement) && E.availableSettlementVertices(game, idx, false).length) opts.push('settlement');
     if (p.cities.length < 4 && affordable(p.resources, E.COSTS.city) && E.availableCityVertices(game, idx).length) opts.push('city');
     if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) opts.push('dev');
     if (!opts.length || Math.random() < 0.4) return E.passSpecialBuild(game); // 建てられても、ときどきは様子見でパス
     const choice = pick(opts);
-    if (choice === 'road') return E.buildRoad(game, pick(E.availableRoadEdges(game, idx)));
+    if (choice === 'road') return E.buildRoad(game, pick(roadEdges));
     if (choice === 'settlement') return E.buildSettlement(game, pick(E.availableSettlementVertices(game, idx, false)));
     if (choice === 'city') return E.buildCity(game, pick(E.availableCityVertices(game, idx)));
     return E.buyDevCard(game);
@@ -422,8 +423,8 @@ function specialBuildStep(game, level) {
   }
   if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) return E.buyDevCard(game);
   if (level === 'strong') {
-    const edges = E.availableRoadEdges(game, idx);
-    if (p.roads.length < 15 && edges.length && affordable(p.resources, E.COSTS.road)) {
+    const edges = E.availableRoadEdges(game, idx).filter((e) => affordableRoadEdge(game, idx, e));
+    if (p.roads.length < 15 && edges.length) {
       const scored = edges.map((e) => ({ e, s: roadValue(game, e, idx, level) })).sort((a, b) => b.s - a.s);
       if (scored[0].s > 0) return E.buildRoad(game, scored[0].e);
     }
