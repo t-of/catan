@@ -52,7 +52,7 @@ export const COSTS = {
 const DEV_COUNTS = { knight: 14, vp: 5, roadBuilding: 2, yearOfPlenty: 2, monopoly: 2 };
 export const DEV_LABEL = { knight: '騎士', vp: '勝利点', roadBuilding: '街道建設', yearOfPlenty: '収穫', monopoly: '独占' };
 
-// ---- 都市と騎士（公式ルールの簡略版。3〜4人・基本盤だけに対応。省いた点は README） ----
+// ---- 都市と騎士（公式ルールの簡略版。省いた点は README） ----
 export const COMMODITIES = ['paper', 'cloth', 'coin'];
 export const COMMODITY_LABEL = { paper: '紙', cloth: '布', coin: '硬貨' };
 const COMMODITY_OF_TERRAIN = { forest: 'paper', pasture: 'cloth', mountains: 'coin' }; // 畑(麦)・丘(土)の都市は商品を産まず資源2
@@ -60,6 +60,7 @@ export const TRACKS = ['trade', 'politics', 'science'];
 export const TRACK_LABEL = { trade: '交易', politics: '政治', science: '科学' };
 export const TRACK_COMMODITY = { trade: 'cloth', politics: 'coin', science: 'paper' };
 const CK_BANK_COMMODITY_START = 10; // 商品の銀行の枚数（公式の正確な枚数は資料によって差があるため、資源と対称な数で簡略化。README に注記）
+const CK_BANK_COMMODITY_START_56 = 13; // 5〜6人用拡張（資源の銀行が19→24になるのと同じ比率で増やす）
 export const KNIGHT_COST = { sheep: 1, ore: 1 }; // 建てる・昇格するコスト（共通）
 export const KNIGHT_ACTIVATE_COST = { wheat: 1 };
 export const WALL_COST = { brick: 2 };
@@ -85,6 +86,7 @@ export const PROGRESS_LABEL = {
   sc_cardsteal: '模倣（相手の進歩カードを奪う）', sc_resource2: '豊作（資源を2つ）',
 };
 const PROGRESS_COPIES = 2; // 各カード2枚ずつ（公式の54枚そのままの構成ではない簡略版。README に注記）
+const PROGRESS_COPIES_56 = 3; // 5〜6人用拡張は公式どおり枚数を増やす（簡略版なので比率は厳密ではない）
 const PROGRESS_VP_CARDS = new Set(['tr_vp', 'po_vp', 'sc_vp']); // 使うとすぐ公開される勝利点カード
 const PROGRESS_HAND_LIMIT = 4;
 const EVENT_FACES = ['barbarian', 'barbarian', 'barbarian', 'trade', 'politics', 'science']; // 事件のサイコロ（3つめ）
@@ -136,7 +138,7 @@ function round3(n) { return Math.round(n * 1000) / 1000; }
 function emptyResources() { return { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 }; }
 function emptyCommodities() { return { paper: 0, cloth: 0, coin: 0 }; }
 function sumCommodities(o) { return o ? COMMODITIES.reduce((a, k) => a + (o[k] || 0), 0) : 0; }
-function buildProgressDeck(rng, color) { return shuffle(PROGRESS_CARDS[color].flatMap((id) => Array(PROGRESS_COPIES).fill(id)), rng); }
+function buildProgressDeck(rng, color, ext) { return shuffle(PROGRESS_CARDS[color].flatMap((id) => Array(ext ? PROGRESS_COPIES_56 : PROGRESS_COPIES).fill(id)), rng); }
 function sumRes(o) { return RESOURCES.reduce((a, k) => a + (o[k] || 0), 0); }
 function canAfford(res, cost) { return Object.entries(cost).every(([k, v]) => (res[k] || 0) >= v); }
 function payCost(res, cost) { Object.entries(cost).forEach(([k, v]) => { res[k] -= v; }); }
@@ -511,7 +513,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   if (playerCount >= 5 && !expansions.includes('5-6player')) expansions.push('5-6player');
   const ext = expansions.includes('5-6player');
   const seafarers = expansions.includes('seafarers');
-  const ck = expansions.includes('cities-knights'); // 都市と騎士。3〜4人・基本盤だけで使う想定（航海者版・5〜6人との組み合わせは作っていない）
+  const ck = expansions.includes('cities-knights'); // 都市と騎士。5〜6人なら5〜6人拡張の盤に自動で変わる（航海者版との組み合わせは作っていない）
   // 交易と略奪。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士との組み合わせは作っていない）
   const tb = expansions.includes('traders-barbarians') && !ext && !seafarers && !ck;
   // サッカー熱。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士・交易と略奪との組み合わせは作っていない）
@@ -529,6 +531,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   if (scenario === 'rivers') applyRiver(board);
   else if (scenario === 'barbarians') applyBarbarianBoard(board, rng);
   const bankStart = ext ? BANK_START_56 : BANK_START;
+  const ckCommodityStart = ext ? CK_BANK_COMMODITY_START_56 : CK_BANK_COMMODITY_START;
   const names = options.names || [];
   const players = Array.from({ length: playerCount }, (_, i) => ({
     idx: i,
@@ -571,7 +574,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     bank: {
       resources: { wood: bankStart, brick: bankStart, sheep: bankStart, wheat: bankStart, ore: bankStart },
       devDeck: ck ? [] : buildDevDeck(rng, ext, scenario), // 都市と騎士では発展カードは使わない
-      commodities: ck ? { paper: CK_BANK_COMMODITY_START, cloth: CK_BANK_COMMODITY_START, coin: CK_BANK_COMMODITY_START } : null,
+      commodities: ck ? { paper: ckCommodityStart, cloth: ckCommodityStart, coin: ckCommodityStart } : null,
     },
     phase: 'setup1', // setup1 → setup2 → roll → main / discard / goldPick / scienceBonus / moveRobber / specialBuilding → gameOver
     setupOrder,
@@ -612,7 +615,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     log: [],
     // 都市と騎士
     metropolis: ck ? { trade: null, politics: null, science: null } : null,
-    progressDecks: ck ? { trade: buildProgressDeck(rng, 'trade'), politics: buildProgressDeck(rng, 'politics'), science: buildProgressDeck(rng, 'science') } : null,
+    progressDecks: ck ? { trade: buildProgressDeck(rng, 'trade', ext), politics: buildProgressDeck(rng, 'politics', ext), science: buildProgressDeck(rng, 'science', ext) } : null,
     barbarianProgress: 0,
     barbarianAttacked: false, // まだ一度も蛮族が襲来していない間は、7が出ても盗賊は動かない
     eventDie: null,

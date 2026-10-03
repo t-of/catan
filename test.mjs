@@ -843,6 +843,54 @@ test('都市と騎士: CPUだけで4人、数局きちんと決着する（勝�
   }
 });
 
+// ---- 都市と騎士の5〜6人用拡張 ----
+test('都市と騎士×5〜6人: 本島30マス。銀行24枚・商品13枚ずつ・進歩カード各色30枚、特別建設フェイズつき', () => {
+  for (const n of [5, 6]) {
+    const g = ckGame(n);
+    assert.deepEqual(g.expansions.sort(), ['5-6player', 'cities-knights']);
+    assert.equal(g.winTarget, 13);
+    assert.equal(g.board.hexes.length, 30);
+    assert.deepEqual(g.bank.resources, { wood: 24, brick: 24, sheep: 24, wheat: 24, ore: 24 });
+    assert.deepEqual(g.bank.commodities, { paper: 13, cloth: 13, coin: 13 });
+    assert.equal(g.progressDecks.trade.length, 30);
+    assert.equal(g.progressDecks.politics.length, 30);
+    assert.equal(g.progressDecks.science.length, 30);
+  }
+});
+
+test('都市と騎士×5〜6人: 特別建設フェイズで騎士・都市壁・都市の発展も建てられる', () => {
+  const g = ckGame(5);
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 3;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; p.commodities = { paper: 5, cloth: 5, coin: 5 }; });
+  const v = g.board.vertices.find((x) => x.edgeIds.length >= 2 && !x.building);
+  v.building = { owner: 2, type: 'city' };
+  g.players[2].cities.push(v.id);
+  const roadEdge = v.edgeIds[0];
+  g.board.edges[roadEdge].road = 2; g.players[2].roads.push(roadEdge);
+  assert.ok(E.endTurn(g));
+  assert.equal(g.phase, 'specialBuilding');
+  assert.equal(E.currentPlayer(g), 2);
+  const knightVertices = E.availableKnightVertices(g, 2); // 道のもう一端（建物なし）に置ける
+  assert.ok(knightVertices.length > 0);
+  assert.ok(E.buildKnight(g, knightVertices[0]));
+  assert.equal(g.players[2].knights.length, 1);
+  assert.ok(E.buildWall(g));
+  assert.equal(g.players[2].walls, 1);
+  assert.ok(E.improveCity(g, 'trade'));
+  assert.equal(g.players[2].cityImprovements.trade, 1);
+});
+
+test('都市と騎士×5〜6人: CPUだけで5人・6人、数局きちんと決着する（勝利点13点）', () => {
+  for (const levels of [['weak', 'normal', 'strong', 'weak', 'normal'], ['weak', 'normal', 'strong', 'weak', 'normal', 'strong']]) {
+    for (let i = 0; i < 3; i++) {
+      const g = playOutCpu(levels, 900000, { expansions: ['cities-knights'] });
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'cities-knights']);
+      assert.ok(g.winner != null);
+      assert.ok(E.playerScore(g, g.winner) >= 13);
+    }
+  }
+});
+
 test('CPU: 強さの差（よわい vs ふつう、ふつう vs つよい）を4人（2対2）対局の勝ち数で見る', () => {
   // 実際のアプリは3〜4人用なので、比較も4人（levelA2人 + levelB2人、席はランダム）で行う
   function winRate(levelA, levelB, games) {

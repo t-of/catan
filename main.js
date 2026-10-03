@@ -188,9 +188,9 @@ function syncCountPicker() {
 }
 syncCountPicker();
 
-// ---- 拡張選び（都市と騎士・交易と略奪・サッカー熱・探検家と海賊は3〜4人だけ。航海者版は5〜6人でも選べる） ----
+// ---- 拡張選び（交易と略奪・サッカー熱・探検家と海賊は3〜4人だけ。航海者版・都市と騎士は5〜6人でも選べる） ----
 // 他の拡張も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
-const EXPANSIONS_34_ONLY = ['cities-knights', 'traders-barbarians', 'soccer', 'explorers-pirates'];
+const EXPANSIONS_34_ONLY = ['traders-barbarians', 'soccer', 'explorers-pirates'];
 let expansion = load('expansion', 'none');
 if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'soccer', 'explorers-pirates'].includes(expansion)) expansion = 'none';
 let scenario = load('scenario', 'fishermen');
@@ -210,7 +210,7 @@ els.scenarioPicker.addEventListener('click', (e) => {
   syncExpansionPicker();
 });
 function syncExpansionPicker() {
-  const limited = playerCount >= 5; // 5〜6人は航海者版だけ選べる
+  const limited = playerCount >= 5; // 5〜6人は航海者版・都市と騎士だけ選べる
   els.expansionNote.hidden = !limited;
   [...els.expansionPicker.children].forEach((b) => {
     b.hidden = limited && EXPANSIONS_34_ONLY.includes(b.dataset.expansion);
@@ -281,7 +281,7 @@ renderSeatsPanel();
 
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
-  const allowedForCount = playerCount <= 4 || expansion === 'seafarers';
+  const allowedForCount = playerCount <= 4 || expansion === 'seafarers' || expansion === 'cities-knights';
   const expansions = allowedForCount && expansion !== 'none' ? [expansion] : [];
   const names = seats.map((s) => s.name);
   game = E.createGame(playerCount, Math.random, { expansions, scenario, names });
