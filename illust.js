@@ -178,13 +178,14 @@ export function terrainDecor(a, terrain, x, y) {
   }
 }
 
-// 丸太（横向き。右端に年輪の切り口）。x,y は左端・中心の高さ、len は長さ、r は半径
-function log(a, x, y, len, r) {
-  add(a, rect(x, y - r, len, 2 * r), '#8a5a32');
-  add(a, rect(x, y - r, len, r * 0.6), '#a8743f');
-  add(a, ell(x, y, r * 0.5, r), '#6b4424');
-  add(a, ell(x + len, y, r * 0.55, r), '#e3b97c', 1, '#6b4424', 1);
-  add(a, ell(x + len, y, r * 0.28, r * 0.5), 'none', 1, '#b9834a', 0.8);
+// 丸太（切り口を手前に、胴を左上の奥へ少し見せる）。cx,cy は切り口の中心、r は半径
+function log(a, cx, cy, r) {
+  const bx = cx - 0.6 * r, by = cy - 0.45 * r; // 奥の端
+  const px = 0.6 * r, py = -0.8 * r; // 胴の幅（奥へ向かう向きに直交）
+  add(a, ell(bx, by, r, r), '#6b4424');
+  add(a, poly([[cx + px, cy + py], [bx + px, by + py], [bx - px, by - py], [cx - px, cy - py]]), '#8a5a32');
+  add(a, ell(cx, cy, r, r), '#e3b97c', 1, '#6b4424', 1.4);
+  add(a, ell(cx, cy, r * 0.5, r * 0.5), 'none', 1, '#b9834a', 0.9);
 }
 // 岩のかたまり（左が明るく右が暗いごつごつした形）。x,y は底の中心
 function rock(a, x, y, s) {
@@ -196,7 +197,7 @@ function rock(a, x, y, s) {
 
 // 手札・コスト表示などの小さなアイコン（40x40 の中）
 export function resourceIcon(a, kind) {
-  if (kind === 'wood') { add(a, ell(20, 35, 15, 2.5), '#3a2410', 0.3); log(a, 5, 29, 24, 5.5); log(a, 9, 18, 23, 5.5); }
+  if (kind === 'wood') { add(a, ell(20, 35, 15, 2.5), '#3a2410', 0.3); log(a, 14, 29, 6.5); log(a, 28, 29, 6.5); log(a, 21, 17.5, 6.5); }
   if (kind === 'brick') bricks(a, 20, 32, 1.2);
   if (kind === 'sheep') sheep(a, 18, 30, 1.3);
   if (kind === 'wheat') sheaf(a, 20, 36, 1.3);
