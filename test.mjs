@@ -527,6 +527,57 @@ test('航海者版: CPUだけで4人、1局を最後まで決着できる（数�
   }
 });
 
+// ---- 航海者版の5〜6人用拡張 ----
+test('航海者版×5〜6人: 本島30＋海22＋小島6＝58マス。銀行24枚・発展カード34枚・特別建設フェイズつき', () => {
+  for (const n of [5, 6]) {
+    for (let i = 0; i < 5; i++) {
+      const g = E.createGame(n, Math.random, { expansions: ['seafarers'] });
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'seafarers']);
+      assert.equal(g.winTarget, 14);
+      assert.equal(g.board.hexes.length, 58);
+      const counts = {};
+      g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
+      assert.equal(counts.water, 22);
+      assert.equal(counts.gold, 1);
+      assert.equal(counts.desert, 1);
+      assert.equal(g.board.islandHexIds.size, 6);
+      assert.deepEqual(g.bank.resources, { wood: 24, brick: 24, sheep: 24, wheat: 24, ore: 24 });
+      assert.equal(g.bank.devDeck.length, 34);
+    }
+  }
+  // 画面からは expansions: ['seafarers'] で来る想定。5〜6人を選んでも航海者版を選べる
+  assert.deepEqual(E.createGame(5, Math.random, { expansions: ['seafarers'] }).expansions.sort(), ['5-6player', 'seafarers']);
+});
+
+test('航海者版×5〜6人: 特別建設フェイズで船も建てられる', () => {
+  const g = E.createGame(5, Math.random, { expansions: ['seafarers'] });
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 3;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
+  // プレイヤー2が船を出せるよう、海沿いに開拓地を置いておく
+  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water'));
+  const v = g.board.vertices[seaEdge.v1];
+  v.building = { owner: 2, type: 'settlement' };
+  g.players[2].settlements.push(v.id);
+  assert.ok(E.endTurn(g));
+  assert.equal(g.phase, 'specialBuilding');
+  assert.equal(E.currentPlayer(g), 2);
+  assert.ok(E.availableShipEdges(g, 2).length > 0);
+  const shipEdge = E.availableShipEdges(g, 2)[0];
+  assert.ok(E.buildShip(g, shipEdge));
+  assert.equal(g.players[2].ships.length, 1);
+});
+
+test('航海者版×5〜6人: CPUだけで5人・6人、数局きちんと決着する', () => {
+  for (const levels of [['weak', 'normal', 'strong', 'weak', 'normal'], ['weak', 'normal', 'strong', 'weak', 'normal', 'strong']]) {
+    for (let i = 0; i < 3; i++) {
+      const g = playOutCpu(levels, 900000, { expansions: ['seafarers'] });
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'seafarers']);
+      assert.ok(g.winner != null);
+      assert.ok(E.playerScore(g, g.winner) >= 14);
+    }
+  }
+});
+
 // ---- 都市と騎士 ----
 function ckGame(count = 4) { return E.createGame(count, Math.random, { expansions: ['cities-knights'] }); }
 

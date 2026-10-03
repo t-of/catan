@@ -30,9 +30,12 @@ const MAX_ROADS = 15, MAX_SETTLEMENTS = 5, MAX_CITIES = 4, MAX_SHIPS = 15;
 // ---- 航海者版（公式ルールの「新しい島へ」シナリオを簡略化） ----
 // 本島は3〜4人用と同じ19マス。周りを海で1周し、海の向こうに2マスずつの小島を3つ置く。
 // 金の川（gold）マスは、出目が合えば持ち主が好きな資源を1枚ずつ選べる（通常の資源は出さない）。
+// 5〜6人は、本島を5〜6人拡張と同じ30マスにする（公式の「航海者 5〜6人用拡張」の簡略版）。
 const SEAFARERS_TERRAIN_COUNTS = { forest: 3, hills: 3, pasture: 4, field: 4, mountains: 3, desert: 1, gold: 1 }; // 19マス
+const SEAFARERS_TERRAIN_COUNTS_56 = { forest: 6, hills: 5, pasture: 6, field: 6, mountains: 5, desert: 1, gold: 1 }; // 30マス
+const SEAFARERS_NUMBER_TOKENS_56 = [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12]; // 砂漠1つぶん29マス
 const SEAFARERS_ISLAND_TERRAIN = ['pasture', 'field', 'hills', 'mountains', 'forest', 'field']; // 小島3つ×2マス
-const SEAFARERS_NUMBER_EXTRA = [3, 4, 5, 9, 10, 11]; // 小島6マスぶんの数字チップ（本島分18枚に足す）
+const SEAFARERS_NUMBER_EXTRA = [3, 4, 5, 9, 10, 11]; // 小島6マスぶんの数字チップ（本島分に足す）
 const SEAFARERS_ISLANDS = [
   [{ q: 5, r: -2 }, { q: 5, r: -3 }],
   [{ q: -3, r: 5 }, { q: -4, r: 5 }],
@@ -281,25 +284,27 @@ function buildDevDeck(rng, ext, scenario) {
 function edgeTouchesLand(edge, hexes) { return edge.hexIds.some((id) => hexes[id].terrain !== 'water'); }
 function edgeTouchesSea(edge, hexes) { return edge.hexIds.length < 2 || edge.hexIds.some((id) => hexes[id].terrain === 'water'); }
 
-// 中心から軸座標で距離 dist にある六角形の輪（本島を囲む海の輪に使う）
-function ringCoords(dist) {
-  const coords = [];
-  for (let q = -dist; q <= dist; q++) {
-    for (let r = -dist; r <= dist; r++) {
-      const s = -q - r;
-      if (Math.max(Math.abs(q), Math.abs(r), Math.abs(s)) === dist) coords.push({ q, r });
-    }
-  }
-  return coords;
+// 陸マスのまわり1周ぶんの海（陸に隣り合い、まだ陸でない軸座標）。本島がどんな形でも、ちょうど1周分の海で囲める。
+function adjacentWaterCoords(landCoords) {
+  const landSet = new Set(landCoords.map((c) => `${c.q},${c.r}`));
+  const ring = new Map();
+  landCoords.forEach((c) => {
+    HEX_DIRS.forEach(([dq, dr]) => {
+      const q = c.q + dq, r = c.r + dr, key = `${q},${r}`;
+      if (!landSet.has(key) && !ring.has(key)) ring.set(key, { q, r });
+    });
+  });
+  return [...ring.values()];
 }
 
-function buildSeafarersBoard(rng) {
-  const mainCoords = boardCoords(false); // 本島は3〜4人用と同じ19マスの並び
-  const waterCoords = ringCoords(3); // 本島を1周する海（18マス）
+function buildSeafarersBoard(rng, ext) {
+  const mainCoords = boardCoords(ext); // 3〜4人は本島19マス、5〜6人は5〜6人拡張と同じ30マス
+  const waterCoords = adjacentWaterCoords(mainCoords); // 本島を1周する海
   const islandCoords = SEAFARERS_ISLANDS.flat(); // 小島3つ×2マス（本島から離れた外海に浮かぶ）
   let nextId = 0;
   const hexes = [];
-  const landPool = shuffle(Object.entries(SEAFARERS_TERRAIN_COUNTS).flatMap(([t, n]) => Array(n).fill(t)), rng);
+  const terrainCounts = ext ? SEAFARERS_TERRAIN_COUNTS_56 : SEAFARERS_TERRAIN_COUNTS;
+  const landPool = shuffle(Object.entries(terrainCounts).flatMap(([t, n]) => Array(n).fill(t)), rng);
   mainCoords.forEach((c, i) => hexes.push({ id: nextId++, q: c.q, r: c.r, terrain: landPool[i], number: null, edgeIds: [], vertexIds: [] }));
   waterCoords.forEach((c) => hexes.push({ id: nextId++, q: c.q, r: c.r, terrain: 'water', number: null, edgeIds: [], vertexIds: [] }));
   const islandPool = shuffle(SEAFARERS_ISLAND_TERRAIN, rng);
@@ -309,7 +314,7 @@ function buildSeafarersBoard(rng) {
   const byCoord = new Map(hexes.map((h) => [`${h.q},${h.r}`, h]));
   const neighborsOf = (h) => HEX_DIRS.map(([dq, dr]) => byCoord.get(`${h.q + dq},${h.r + dr}`)).filter(Boolean);
   const nonDesert = hexes.filter((h) => h.terrain !== 'desert' && h.terrain !== 'water');
-  const numberPool = NUMBER_TOKENS.concat(SEAFARERS_NUMBER_EXTRA); // 本島18 + 小島6 = 24
+  const numberPool = (ext ? SEAFARERS_NUMBER_TOKENS_56 : NUMBER_TOKENS).concat(SEAFARERS_NUMBER_EXTRA); // 本島ぶん + 小島6
   let attempt = 0;
   for (;;) {
     const nums = shuffle(numberPool, rng);
@@ -344,7 +349,7 @@ function buildSeafarersBoard(rng) {
 // 探検家と海賊: 航海者版と同じ盤を使い、本島から離れた小島を「霧」で伏せる（船で探検するまで地形・数字が分からない）。
 // 小島のうち1マスは金の川にして、探検の見返りを豪華にする（公式の金塊ヘクスの簡略版）。
 function buildExplorersBoard(rng) {
-  const board = buildSeafarersBoard(rng);
+  const board = buildSeafarersBoard(rng, false);
   const ids = [...board.islandHexIds];
   if (ids.length) board.hexes[ids[0]].terrain = 'gold';
   ids.forEach((id) => { board.hexes[id].fog = true; });
@@ -515,7 +520,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   const ep = expansions.includes('explorers-pirates') && !ext && !seafarers && !ck && !tb && !soccer;
   const scenario = tb ? (TB_SCENARIOS.includes(options.scenario) ? options.scenario : 'fishermen') : null;
   let board;
-  if (seafarers) board = buildSeafarersBoard(rng);
+  if (seafarers) board = buildSeafarersBoard(rng, ext);
   else if (ep) board = buildExplorersBoard(rng);
   else if (scenario === 'fishermen') board = buildFishermenBoard(rng);
   else if (scenario === 'caravans') board = buildCaravansBoard(rng);

@@ -188,8 +188,9 @@ function syncCountPicker() {
 }
 syncCountPicker();
 
-// ---- 拡張選び（3〜4人だけ選べる。5〜6人は自動で5〜6人拡張） ----
-// 他の拡張（都市と騎士・交易と略奪）も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
+// ---- 拡張選び（都市と騎士・交易と略奪・サッカー熱・探検家と海賊は3〜4人だけ。航海者版は5〜6人でも選べる） ----
+// 他の拡張も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
+const EXPANSIONS_34_ONLY = ['cities-knights', 'traders-barbarians', 'soccer', 'explorers-pirates'];
 let expansion = load('expansion', 'none');
 if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'soccer', 'explorers-pirates'].includes(expansion)) expansion = 'none';
 let scenario = load('scenario', 'fishermen');
@@ -209,12 +210,14 @@ els.scenarioPicker.addEventListener('click', (e) => {
   syncExpansionPicker();
 });
 function syncExpansionPicker() {
-  const choosable = playerCount <= 4;
-  els.expansionPicker.hidden = !choosable;
-  els.expansionNote.hidden = choosable;
-  els.scenarioRow.hidden = !choosable || expansion !== 'traders-barbarians';
-  if (!choosable) return;
-  [...els.expansionPicker.children].forEach((b) => b.classList.toggle('is-selected', b.dataset.expansion === expansion));
+  const limited = playerCount >= 5; // 5〜6人は航海者版だけ選べる
+  els.expansionNote.hidden = !limited;
+  [...els.expansionPicker.children].forEach((b) => {
+    b.hidden = limited && EXPANSIONS_34_ONLY.includes(b.dataset.expansion);
+    b.classList.toggle('is-selected', b.dataset.expansion === expansion);
+  });
+  if (limited && EXPANSIONS_34_ONLY.includes(expansion)) { expansion = 'none'; save('expansion', expansion); }
+  els.scenarioRow.hidden = expansion !== 'traders-barbarians';
   [...els.scenarioPicker.children].forEach((b) => b.classList.toggle('is-selected', b.dataset.scenario === scenario));
 }
 syncExpansionPicker();
@@ -278,7 +281,8 @@ renderSeatsPanel();
 
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
-  const expansions = playerCount <= 4 && expansion !== 'none' ? [expansion] : [];
+  const allowedForCount = playerCount <= 4 || expansion === 'seafarers';
+  const expansions = allowedForCount && expansion !== 'none' ? [expansion] : [];
   const names = seats.map((s) => s.name);
   game = E.createGame(playerCount, Math.random, { expansions, scenario, names });
   ui = { mode: modeForPhase(), data: {} };
