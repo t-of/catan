@@ -178,13 +178,29 @@ export function terrainDecor(a, terrain, x, y) {
   }
 }
 
+// 丸太（横向き。右端に年輪の切り口）。x,y は左端・中心の高さ、len は長さ、r は半径
+function log(a, x, y, len, r) {
+  add(a, rect(x, y - r, len, 2 * r), '#8a5a32');
+  add(a, rect(x, y - r, len, r * 0.6), '#a8743f');
+  add(a, ell(x, y, r * 0.5, r), '#6b4424');
+  add(a, ell(x + len, y, r * 0.55, r), '#e3b97c', 1, '#6b4424', 1);
+  add(a, ell(x + len, y, r * 0.28, r * 0.5), 'none', 1, '#b9834a', 0.8);
+}
+// 岩のかたまり（左が明るく右が暗いごつごつした形）。x,y は底の中心
+function rock(a, x, y, s) {
+  const p = (pts) => poly(pts.map(([dx, dy]) => [x + dx * s, y + dy * s]));
+  add(a, p([[-14, 0], [-15, -9], [-9, -19], [1, -23], [9, -17], [14, -8], [13, 0]]), '#717a8c');
+  add(a, p([[-14, 0], [-15, -9], [-9, -19], [1, -23], [-1, -12], [-5, 0]]), '#a3abba');
+  add(a, p([[-9, -19], [1, -23], [-1, -12], [-6, -14]]), '#c9cfda');
+}
+
 // 手札・コスト表示などの小さなアイコン（40x40 の中）
 export function resourceIcon(a, kind) {
-  if (kind === 'wood') { tree(a, 14, 34, 0.95); tree(a, 27, 36, 1.05); }
+  if (kind === 'wood') { add(a, ell(20, 35, 15, 2.5), '#3a2410', 0.3); log(a, 5, 29, 24, 5.5); log(a, 9, 18, 23, 5.5); }
   if (kind === 'brick') bricks(a, 20, 32, 1.2);
   if (kind === 'sheep') sheep(a, 18, 30, 1.3);
   if (kind === 'wheat') sheaf(a, 20, 36, 1.3);
-  if (kind === 'ore') { peak(a, 14, 34, 18); peak(a, 24, 34, 26); }
+  if (kind === 'ore') { add(a, ell(20, 34, 16, 2.5), '#1e222b', 0.3); rock(a, 18, 34, 1); rock(a, 31, 34, 0.45); }
   // 都市と騎士の商品（紙・布・硬貨）: 細かな絵でなく、色付きの札・円で見分けられればよい簡略アイコン
   if (kind === 'paper') { add(a, rect(8, 10, 24, 22), '#eee6c8', 1, '#8a7a4a', 1.5); add(a, line(12, 17, 28, 17), 'none', 0.6, '#8a7a4a', 1.5); add(a, line(12, 23, 28, 23), 'none', 0.6, '#8a7a4a', 1.5); }
   if (kind === 'cloth') { add(a, poly([[20, 6], [34, 14], [28, 34], [12, 34], [6, 14]]), '#d66a9a', 1, '#8a3a60', 1.5); }
