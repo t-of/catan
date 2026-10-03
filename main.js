@@ -191,7 +191,7 @@ syncCountPicker();
 // ---- 拡張選び（3〜4人だけ選べる。5〜6人は自動で5〜6人拡張） ----
 // 他の拡張（都市と騎士・交易と略奪）も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
 let expansion = load('expansion', 'none');
-if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'soccer'].includes(expansion)) expansion = 'none';
+if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'soccer', 'explorers-pirates'].includes(expansion)) expansion = 'none';
 let scenario = load('scenario', 'fishermen');
 if (!E.TB_SCENARIOS.includes(scenario)) scenario = 'fishermen';
 els.expansionPicker.addEventListener('click', (e) => {
@@ -312,9 +312,13 @@ function migrateGame(g) {
     if (p.pendingCamelBuilds == null) p.pendingCamelBuilds = 0;
     if (p.socShots == null) p.socShots = 0;
     if (p.socPoints == null) p.socPoints = 0;
+    if (p.epRevealed === undefined) p.epRevealed = g.explorersPirates ? 0 : null;
   });
   // 古い保存（サッカー熱より前）には soccer がないので、「なし」として引き継ぐ
   g.soccer = !!g.soccer;
+  // 古い保存（探検家と海賊より前）には explorersPirates がないので、「なし」として引き継ぐ
+  g.explorersPirates = !!g.explorersPirates;
+  if (g.epMissionWinner === undefined) g.epMissionWinner = null;
   if (g.soccer) {
     g.soccerDay = g.soccerDay || 1;
     g.soccerMaxDay = g.soccerMaxDay || (g.playerCount === 3 ? 12 : 15);
@@ -557,13 +561,14 @@ function renderBoardInto(svg, g, uiState) {
   g.board.hexes.forEach((hex) => {
     const [cx, cy] = hexCenterPx(g, hex);
     const pts = hexPointsPx(g, hex);
-    const style = I.TERRAIN_STYLE[hex.terrain];
+    const shownTerrain = hex.fog ? 'fog' : hex.terrain;
+    const style = I.TERRAIN_STYLE[shownTerrain];
     const shrink = (p, k) => p.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k]);
     I.add(S, I.poly(shrink(pts, 0.98)), style.edge);
     I.add(S, I.poly(shrink(pts, 0.94)), `url(#${svg.id}-g-${style.grad})`);
     I.add(S, I.poly(shrink(pts, 0.88)), 'none', 0.22, '#ffffff', 1.5);
-    I.terrainDecor(S, hex.terrain, cx, cy);
-    if (hex.number != null) {
+    I.terrainDecor(S, shownTerrain, cx, cy);
+    if (hex.number != null && !hex.fog) {
       const hot = hex.number === 6 || hex.number === 8;
       I.add(S, I.ell(cx + 1, cy + 3, 19, 19), '#000', 0.28);
       I.add(S, I.ell(cx, cy, 18, 18), `url(#${svg.id}-g-token)`, 1, '#c7b58b', 1.2);
@@ -787,6 +792,7 @@ function renderBoardInto(svg, g, uiState) {
   // 盗賊・海賊を置ける場所（タイル自体をタップできるようにする）
   if (uiState && (uiState.mode === 'moveRobber' || uiState.mode === 'devKnightHex')) {
     g.board.hexes.forEach((hex) => {
+      if (hex.fog) return; // 探検家と海賊: 霧のままのマスには置けない
       const isWater = hex.terrain === 'water';
       if (isWater ? hex.id === g.board.pirateHex || g.board.pirateHex == null : hex.id === g.board.robberHex) return;
       const pts = hexPointsPx(g, hex).map(([x, y]) => `${x},${y}`).join(' ');
@@ -1421,6 +1427,9 @@ function renderTradeMenu() {
         <button class="ghost-btn" data-act="goldTrade" ${E.canTradeGold(game, idx) && (p.gold || 0) >= 2 ? '' : 'disabled'}>金貨2枚: 資源1枚（手番に${p.goldSpendsThisTurn || 0}/2回使用）</button></div>
       <div class="sheet__row"><span>資源</span><div class="res-pick" data-row="gold2Res"></div>
         <button class="ghost-btn" data-act="resForGold">資源→金貨1枚（港なしは4枚、3:1港は3枚）</button></div>`;
+  } else if (game.explorersPirates) {
+    scenarioHtml = `<hr style="border-color:rgba(255,255,255,0.15)">
+      <h2>探検家と海賊（霧のマスを見つけた数 ${p.epRevealed || 0}/3${game.epMissionWinner === idx ? '・探検ミッション達成+1点' : ''}）</h2>`;
   }
 
   els.panel.innerHTML = `<h2>銀行・港と交易</h2>

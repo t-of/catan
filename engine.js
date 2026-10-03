@@ -341,6 +341,16 @@ function buildSeafarersBoard(rng) {
   return { hexes, vertices, edges, robberHex: desert.id, pirateHex, portEdgeIds, islandHexIds };
 }
 
+// 探検家と海賊: 航海者版と同じ盤を使い、本島から離れた小島を「霧」で伏せる（船で探検するまで地形・数字が分からない）。
+// 小島のうち1マスは金の川にして、探検の見返りを豪華にする（公式の金塊ヘクスの簡略版）。
+function buildExplorersBoard(rng) {
+  const board = buildSeafarersBoard(rng);
+  const ids = [...board.islandHexIds];
+  if (ids.length) board.hexes[ids[0]].terrain = 'gold';
+  ids.forEach((id) => { board.hexes[id].fog = true; });
+  return board;
+}
+
 // 外周の辺を頂点の並びに変換する（orderedBoundary の辺の列を、1つずつずれた頂点の列にする）
 function boundaryVertexLoop(edges) {
   const order = orderedBoundary(edges);
@@ -501,9 +511,12 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   const tb = expansions.includes('traders-barbarians') && !ext && !seafarers && !ck;
   // サッカー熱。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士・交易と略奪との組み合わせは作っていない）
   const soccer = expansions.includes('soccer') && !ext && !seafarers && !ck && !tb;
+  // 探検家と海賊。同じく3〜4人・航海者版と同じ盤だけで使う想定（他の拡張との組み合わせはありません）
+  const ep = expansions.includes('explorers-pirates') && !ext && !seafarers && !ck && !tb && !soccer;
   const scenario = tb ? (TB_SCENARIOS.includes(options.scenario) ? options.scenario : 'fishermen') : null;
   let board;
   if (seafarers) board = buildSeafarersBoard(rng);
+  else if (ep) board = buildExplorersBoard(rng);
   else if (scenario === 'fishermen') board = buildFishermenBoard(rng);
   else if (scenario === 'caravans') board = buildCaravansBoard(rng);
   else if (soccer) board = buildSoccerBoard(rng);
@@ -541,6 +554,8 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     // サッカー熱（soccer=trueのときだけ使う）
     socShots: soccer ? 1 : 0, // 持ち駒（攻撃回数）。最初の組み合わせで1枚使うので1から始まる（上限6）
     socPoints: 0, // フットボールレーンの位置
+    // 探検家と海賊（ep=trueのときだけ使う）
+    epRevealed: ep ? 0 : null, // 船で見つけた霧のマスの数（3つで探検ミッション+1点。最初に3つに届いた人だけ）
   }));
   const setupOrder = Array.from({ length: playerCount }, (_, i) => i); // 1周目は順に。2周目は setup2 で逆順にする
   const game = {
@@ -570,7 +585,9 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     soccerSeasonOver: false,
     pendingSoccerMatch: false,
     soccerLastResult: null,
-    winTarget: ck ? 13 : (soccer ? 11 : (seafarers ? 14 : (scenario ? TB_WIN_TARGET[scenario] : 10))),
+    explorersPirates: ep,
+    epMissionWinner: null, // 探検ミッション（霧のマスを3つ見つける）を最初に達成した人
+    winTarget: ck ? 13 : (soccer ? 11 : ((seafarers || ep) ? 14 : (scenario ? TB_WIN_TARGET[scenario] : 10))),
     richPlayer: null, // 川: 金貨が一番多い人だけ(+1点)
     poorPlayers: [], // 川: 金貨が一番少ない人たち（同点なら全員）(-2点ずつ)
     oldBootHolder: null, // 漁師: 古い靴を持つ人（勝利点が+1点多く要る）
@@ -646,6 +663,7 @@ export function playerScore(game, idx) {
   if (game.soccer) {
     score += soccerStandings(game)[idx].vp;
   }
+  if (game.explorersPirates && game.epMissionWinner === idx) score += 1; // 探検ミッション: 霧のマスを最初に3つ見つけた人+1点
   return score;
 }
 // サッカー熱: フットボールレーンの順位表。同点は同じ順位を分け合い、次の順位をその人数ぶん飛ばす（公式どおり）
@@ -709,6 +727,7 @@ export function canPlaceSettlement(game, vertexId, playerIdx, isSetup) {
   if (v.building) return false;
   if (v.neighbors.some((n) => game.board.vertices[n].building)) return false; // 距離ルール
   if (!v.hexIds.some((h) => game.board.hexes[h].terrain !== 'water')) return false; // 海のど真ん中には置けない
+  if (game.explorersPirates && !v.hexIds.some((h) => game.board.hexes[h].terrain !== 'water' && !game.board.hexes[h].fog)) return false; // 探検家と海賊: 霧のままの島にはまだ建てられない
   if (game.scenario === 'barbarians' && !isSetup && v.hexIds.some((h) => game.board.hexes[h].conquered)) return false; // 征服されたマスの隣には建てられない
   if (isSetup) return true;
   return v.edgeIds.some((eId) => { const e = game.board.edges[eId]; return e.road === playerIdx || e.ship === playerIdx; });
@@ -732,6 +751,28 @@ export function canPlaceRoad(game, edgeId, playerIdx) {
 }
 export function availableRoadEdges(game, playerIdx) {
   return game.board.edges.filter((e) => canPlaceRoad(game, e.id, playerIdx)).map((e) => e.id);
+}
+
+// ---- 探検家と海賊: 霧のマスを探検する ----
+// 辺の両どなりのマスに霧があれば、船を置いた・動かした人がそれを見つける（公式の「探検チップをめくる」の簡略版）。
+function revealFogHex(game, hexId, playerIdx) {
+  const hex = game.board.hexes[hexId];
+  if (!hex.fog) return;
+  hex.fog = false;
+  const p = game.players[playerIdx];
+  p.epRevealed = (p.epRevealed || 0) + 1;
+  // 見つけたマスの資源を1枚もらう（金の川は、資源を選べる本来の仕組みの代わりに、簡略化してランダムな1種類にする）
+  const res = hex.terrain === 'gold' ? RESOURCES[Math.floor(Math.random() * RESOURCES.length)] : TERRAIN_RESOURCE[hex.terrain];
+  if (res && game.bank.resources[res] > 0) { game.bank.resources[res]--; p.resources[res]++; }
+  log(game, `${playerName(game, playerIdx)}が霧の中から${TERRAIN_LABEL[hex.terrain]}の島を見つけた`);
+  if (game.epMissionWinner == null && p.epRevealed >= 3) {
+    game.epMissionWinner = playerIdx;
+    log(game, `${playerName(game, playerIdx)}が探検ミッション達成（+1点）`);
+  }
+}
+function revealFogAt(game, edgeId, playerIdx) {
+  if (!game.explorersPirates) return;
+  game.board.edges[edgeId].hexIds.forEach((hId) => revealFogHex(game, hId, playerIdx));
 }
 
 // ---- 船（航海者版）----
@@ -767,6 +808,7 @@ export function buildShip(game, edgeId) {
   const e = game.board.edges[edgeId];
   e.ship = idx; e.shipPlacedTurn = game.turnNumber;
   p.ships.push(edgeId);
+  revealFogAt(game, edgeId, idx);
   fire(game, 'build');
   recalcLongestRoad(game);
   checkWin(game, idx);
@@ -814,8 +856,10 @@ export function moveShip(game, fromEdgeId, toEdgeId) {
   const i = game.players[idx].ships.indexOf(fromEdgeId);
   if (i >= 0) game.players[idx].ships[i] = toEdgeId;
   game.shipMovedThisTurn = true;
+  revealFogAt(game, toEdgeId, idx);
   fire(game, 'build');
   recalcLongestRoad(game);
+  checkWin(game, idx);
   return true;
 }
 
@@ -1113,6 +1157,7 @@ export function moveRobber(game, hexId, targetPlayerIdx) {
   if (game.phase !== 'moveRobber') return false;
   const idx = currentPlayer(game);
   const hex = game.board.hexes[hexId];
+  if (hex.fog) return false; // 探検家と海賊: 霧のままの島には動かせない
   const isWater = hex.terrain === 'water';
   if (isWater && game.board.pirateHex == null) return false; // 航海者版でなければ海に動かせない
   const currentPos = isWater ? game.board.pirateHex : game.board.robberHex;
@@ -1294,6 +1339,7 @@ export function playKnight(game, cardIdx, hexId, targetPlayerIdx) {
   const idx = currentPlayer(game);
   if (!canPlayDev(game, idx, cardIdx)) return false;
   const hex = game.board.hexes[hexId];
+  if (hex.fog) return false; // 探検家と海賊: 霧のままの島には動かせない
   const isWater = hex.terrain === 'water';
   if (isWater && game.board.pirateHex == null) return false;
   const currentPos = isWater ? game.board.pirateHex : game.board.robberHex;

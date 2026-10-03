@@ -1258,3 +1258,73 @@ test('プレイヤー名: 指定すればログに使われ、空ならプレイ
   delete g.players[2].name;
   assert.equal(E.playerName(g, 2), 'プレイヤー3');
 });
+
+// ---- 探検家と海賊 ----
+test('探検家と海賊: 航海者版と同じ盤（43マス）で、小島6マスがすべて霧、うち1枚が金の川。勝利点は14点', () => {
+  for (let i = 0; i < 10; i++) {
+    const g = E.createGame(4, Math.random, { expansions: ['explorers-pirates'] });
+    assert.deepEqual(g.expansions, ['explorers-pirates']);
+    assert.equal(g.explorersPirates, true);
+    assert.equal(g.winTarget, 14);
+    assert.equal(g.board.hexes.length, 43);
+    const islandHexes = [...g.board.islandHexIds].map((id) => g.board.hexes[id]);
+    assert.equal(islandHexes.length, 6);
+    assert.ok(islandHexes.every((h) => h.fog === true));
+    assert.equal(islandHexes.filter((h) => h.terrain === 'gold').length, 1);
+    assert.equal(g.players[0].epRevealed, 0);
+    assert.equal(g.epMissionWinner, null);
+  }
+});
+
+test('探検家と海賊: 霧の島には建てられない（船で探検するまで）', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['explorers-pirates'] });
+  const fogHexId = [...g.board.islandHexIds][0];
+  const v = g.board.hexes[fogHexId].vertexIds[0];
+  assert.equal(E.canPlaceSettlement(g, v, 0, true), false);
+  assert.equal(E.setupPlaceSettlement(g, v), false);
+});
+
+test('探検家と海賊: 船を置くと隣の霧のマスが見つかり、資源をもらい、探検ミッション(3マス)も進む', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['explorers-pirates'] });
+  g.phase = 'main'; g.turn = 0;
+  const p0 = g.players[0];
+  const fogHex = g.board.hexes.find((h) => h.fog && h.terrain !== 'gold');
+  const edge = g.board.edges.find((e) => e.hexIds.includes(fogHex.id)
+    && (e.hexIds.length < 2 || e.hexIds.some((h) => g.board.hexes[h].terrain === 'water'))
+    && !g.board.hexes[g.board.pirateHex].edgeIds.includes(e.id));
+  assert.ok(edge, '霧のマスに面した置ける辺が見つからない');
+  const v = g.board.vertices[edge.v1];
+  v.building = { owner: 0, type: 'settlement' };
+  p0.settlements.push(v.id);
+  p0.resources = { wood: 2, brick: 0, sheep: 2, wheat: 0, ore: 0 };
+  const sumBefore = Object.values(p0.resources).reduce((a, b) => a + b, 0);
+  assert.ok(E.buildShip(g, edge.id));
+  assert.equal(fogHex.fog, false);
+  assert.equal(p0.epRevealed, 1);
+  const res = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore' }[fogHex.terrain];
+  const sumAfter = Object.values(p0.resources).reduce((a, b) => a + b, 0);
+  assert.equal(sumAfter, sumBefore - 2 + (res ? 1 : 0)); // 船代(木1・羊1)を払い、見つけたマスの資源を1枚もらう
+  // あと2マス見つけるとミッション達成で+1点
+  const others = [...g.board.islandHexIds].map((id) => g.board.hexes[id]).filter((h) => h.id !== fogHex.id && h.fog).slice(0, 2);
+  others.forEach((h) => { h.fog = false; p0.epRevealed++; });
+  if (g.epMissionWinner == null && p0.epRevealed >= 3) g.epMissionWinner = 0;
+  assert.equal(g.epMissionWinner, 0);
+  assert.equal(E.playerScore(g, 0), 1 + 1); // 開拓地1 + 探検ミッション+1
+});
+
+test('探検家と海賊: 盗賊・海賊は霧のままのマスには動かせない', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['explorers-pirates'] });
+  g.phase = 'moveRobber'; g.turn = 0;
+  const fogHex = [...g.board.islandHexIds][0];
+  assert.equal(E.moveRobber(g, fogHex, null), false);
+  assert.notEqual(g.board.robberHex, fogHex);
+});
+
+test('探検家と海賊: CPUだけで4人、1局を最後まで決着できる（数局）', () => {
+  for (let i = 0; i < 5; i++) {
+    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 500000, { expansions: ['explorers-pirates'] });
+    assert.deepEqual(g.expansions, ['explorers-pirates']);
+    assert.ok(g.winner != null);
+    assert.ok(E.playerScore(g, g.winner) >= 14);
+  }
+});

@@ -128,7 +128,7 @@ export function discardFor(game, playerIdx, level) {
 
 // ---- 盗賊・海賊 ----
 function chooseRobberHex(game, idx, level) {
-  const hexes = game.board.hexes.filter((h) => h.id !== game.board.robberHex && h.terrain !== 'water');
+  const hexes = game.board.hexes.filter((h) => h.id !== game.board.robberHex && h.terrain !== 'water' && !h.fog);
   if (level === 'weak') return pick(hexes).id;
   const scored = hexes.map((h) => {
     let score = 0, hasOwn = false;

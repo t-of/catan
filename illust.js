@@ -121,6 +121,7 @@ export const TERRAIN_STYLE = {
   lake: { edge: '#0e5265', grad: 'water' }, // 漁師: 砂漠の代わりの湖（水のグラデーションを流用）
   castle: { edge: '#596070', grad: 'mountain' }, // 蛮族の襲撃: 砦（山のグラデーションを流用）
   pitch: { edge: '#1d6b2c', grad: 'pasture' }, // サッカー熱: サッカー場（牧草のグラデーションを流用）
+  fog: { edge: '#5a6a63', grad: 'fog' }, // 探検家と海賊: 船で見つけるまで地形を伏せる霧のマス
 };
 
 // タイルの上に乗る地形ごとの絵（中心 x,y。R=66 の六角形を前提にした配置）
@@ -183,6 +184,10 @@ export function terrainDecor(a, terrain, x, y) {
       add(a, ell(x + dx - 1.5, y + dy - 1.5, 2.4, 2.4), '#fff0b0', 0.8);
       tag(a, n, 'a-sway', x + dx, y + dy, -(x + i * 0.8));
     });
+  } else if (terrain === 'fog') {
+    const n = a.length; // 地形を伏せた霧（船で近づくまで中身が分からない）
+    add(a, ell(x - 18, y - 8, 26, 13) + ell(x + 14, y - 14, 20, 11) + ell(x, y + 14, 30, 14), '#eef3f0', 0.6);
+    tag(a, n, 'a-cloud', x, y, 0);
   }
 }
 
@@ -241,6 +246,7 @@ export function defsMarkup(prefix) {
 <linearGradient id="${g('desert')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4e6bb"/><stop offset="1" stop-color="#d5bc80"/></linearGradient>
 <linearGradient id="${g('water')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a8aa0"/><stop offset="1" stop-color="#114f62"/></linearGradient>
 <linearGradient id="${g('gold')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6df8a"/><stop offset="1" stop-color="#cf9f2e"/></linearGradient>
+<linearGradient id="${g('fog')}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9fb3ac"/><stop offset="1" stop-color="#5a6a63"/></linearGradient>
 <radialGradient id="${g('token')}" cx="0.4" cy="0.35" r="0.75"><stop offset="0" stop-color="#fffcf4"/><stop offset="1" stop-color="#e6d8b8"/></radialGradient>
 `;
 }
