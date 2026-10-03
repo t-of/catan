@@ -188,9 +188,9 @@ function syncCountPicker() {
 }
 syncCountPicker();
 
-// ---- 拡張選び（サッカー熱・探検家と海賊は3〜4人だけ。航海者版・都市と騎士・交易と略奪は5〜6人でも選べる） ----
+// ---- 拡張選び（サッカー熱は3〜4人だけ。航海者版・都市と騎士・交易と略奪・探検家と海賊は5〜6人でも選べる） ----
 // 他の拡張も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
-const EXPANSIONS_34_ONLY = ['soccer', 'explorers-pirates'];
+const EXPANSIONS_34_ONLY = ['soccer'];
 let expansion = load('expansion', 'none');
 if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'soccer', 'explorers-pirates'].includes(expansion)) expansion = 'none';
 let scenario = load('scenario', 'fishermen');
@@ -281,7 +281,7 @@ renderSeatsPanel();
 
 els.startBtn.addEventListener('click', () => {
   seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
-  const allowedForCount = playerCount <= 4 || expansion === 'seafarers' || expansion === 'cities-knights' || expansion === 'traders-barbarians';
+  const allowedForCount = playerCount <= 4 || expansion === 'seafarers' || expansion === 'cities-knights' || expansion === 'traders-barbarians' || expansion === 'explorers-pirates';
   const expansions = allowedForCount && expansion !== 'none' ? [expansion] : [];
   const names = seats.map((s) => s.name);
   game = E.createGame(playerCount, Math.random, { expansions, scenario, names });

@@ -325,6 +325,23 @@ test('特別建設フェイズ: 手番を終えると、ほかの人が順に建
 });
 
 // ---- CPU ----
+// 決まった乱数の種で1局まわす（Math.random を一時的に差し替える）。CPU・engine の判断が Math.random を直に使っているところが
+// 多く、createGame の rng 引数だけでは種を固定できないため。揺れやすい決着テストをこれで安定させる。
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function withSeededRandom(seed, fn) {
+  const orig = Math.random;
+  Math.random = mulberry32(seed);
+  try { return fn(); } finally { Math.random = orig; }
+}
+
 // CPU だけで1局、決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
 function playOutCpu(levels, maxSteps = 500000, options = {}) {
   const g = E.createGame(levels.length, Math.random, options);
@@ -553,8 +570,9 @@ test('航海者版×5〜6人: 特別建設フェイズで船も建てられる',
   const g = E.createGame(5, Math.random, { expansions: ['seafarers'] });
   g.phase = 'main'; g.turn = 1; g.turnNumber = 3;
   g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
-  // プレイヤー2が船を出せるよう、海沿いに開拓地を置いておく
-  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water'));
+  // プレイヤー2が船を出せるよう、海沿いに開拓地を置いておく（海賊の隣は置けないので避ける）
+  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water')
+    && !g.board.hexes[g.board.pirateHex].edgeIds.includes(e.id));
   const v = g.board.vertices[seaEdge.v1];
   v.building = { owner: 2, type: 'settlement' };
   g.players[2].settlements.push(v.id);
@@ -1484,10 +1502,63 @@ test('探検家と海賊: 盗賊・海賊は霧のままのマスには動かせ
 });
 
 test('探検家と海賊: CPUだけで4人、1局を最後まで決着できる（数局）', () => {
-  for (let i = 0; i < 5; i++) {
-    const g = playOutCpu(['weak', 'normal', 'strong', 'normal'], 500000, { expansions: ['explorers-pirates'] });
+  // 決着までの手数がまれに伸びて揺れるため、決まった種で回して安定させる
+  for (const seed of [1, 2, 3, 4, 5]) {
+    const g = withSeededRandom(seed, () => playOutCpu(['weak', 'normal', 'strong', 'normal'], 2000000, { expansions: ['explorers-pirates'] }));
     assert.deepEqual(g.expansions, ['explorers-pirates']);
     assert.ok(g.winner != null);
     assert.ok(E.playerScore(g, g.winner) >= 14);
+  }
+});
+
+// ---- 探検家と海賊の5〜6人用拡張 ----
+test('探検家と海賊×5〜6人: 本島30＋海22＋小島6＝58マス。銀行24枚・発展カード34枚・特別建設フェイズつき', () => {
+  for (const n of [5, 6]) {
+    for (let i = 0; i < 5; i++) {
+      const g = E.createGame(n, Math.random, { expansions: ['explorers-pirates'] });
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'explorers-pirates']);
+      assert.equal(g.explorersPirates, true);
+      assert.equal(g.winTarget, 14);
+      assert.equal(g.board.hexes.length, 58);
+      const islandHexes = [...g.board.islandHexIds].map((id) => g.board.hexes[id]);
+      assert.equal(islandHexes.length, 6);
+      assert.ok(islandHexes.every((h) => h.fog === true));
+      assert.equal(islandHexes.filter((h) => h.terrain === 'gold').length, 1);
+      assert.deepEqual(g.bank.resources, { wood: 24, brick: 24, sheep: 24, wheat: 24, ore: 24 });
+      assert.equal(g.bank.devDeck.length, 34);
+    }
+  }
+  // 画面からは expansions: ['explorers-pirates'] で来る想定。5〜6人を選んでも探検家と海賊を選べる
+  assert.deepEqual(E.createGame(6, Math.random, { expansions: ['explorers-pirates'] }).expansions.sort(), ['5-6player', 'explorers-pirates']);
+});
+
+test('探検家と海賊×5〜6人: 特別建設フェイズで船も建てられる', () => {
+  const g = E.createGame(5, Math.random, { expansions: ['explorers-pirates'] });
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 3;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
+  // プレイヤー2が船を出せるよう、海沿いに開拓地を置いておく（海賊の隣は置けないので避ける）
+  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water')
+    && !g.board.hexes[g.board.pirateHex].edgeIds.includes(e.id));
+  const v = g.board.vertices[seaEdge.v1];
+  v.building = { owner: 2, type: 'settlement' };
+  g.players[2].settlements.push(v.id);
+  assert.ok(E.endTurn(g));
+  assert.equal(g.phase, 'specialBuilding');
+  assert.equal(E.currentPlayer(g), 2);
+  assert.ok(E.availableShipEdges(g, 2).length > 0);
+  const shipEdge = E.availableShipEdges(g, 2)[0];
+  assert.ok(E.buildShip(g, shipEdge));
+  assert.equal(g.players[2].ships.length, 1);
+});
+
+test('探検家と海賊×5〜6人: CPUだけで5人・6人、数局きちんと決着する', () => {
+  // 決着までの手数がまれに伸びて揺れるため、決まった種で回して安定させる
+  for (const levels of [['weak', 'normal', 'strong', 'weak', 'normal'], ['weak', 'normal', 'strong', 'weak', 'normal', 'strong']]) {
+    for (const seed of [1, 2, 3]) {
+      const g = withSeededRandom(seed, () => playOutCpu(levels, 2000000, { expansions: ['explorers-pirates'] }));
+      assert.deepEqual(g.expansions.sort(), ['5-6player', 'explorers-pirates']);
+      assert.ok(g.winner != null);
+      assert.ok(E.playerScore(g, g.winner) >= 14);
+    }
   }
 });

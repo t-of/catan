@@ -353,8 +353,9 @@ function buildSeafarersBoard(rng, ext) {
 
 // 探検家と海賊: 航海者版と同じ盤を使い、本島から離れた小島を「霧」で伏せる（船で探検するまで地形・数字が分からない）。
 // 小島のうち1マスは金の川にして、探検の見返りを豪華にする（公式の金塊ヘクスの簡略版）。
-function buildExplorersBoard(rng) {
-  const board = buildSeafarersBoard(rng, false);
+// 5〜6人でも、本島が5〜6人拡張と同じ30マスになるだけで、小島3つ（各2マス）はそのまま（航海者版の5〜6人対応と同じ）。
+function buildExplorersBoard(rng, ext) {
+  const board = buildSeafarersBoard(rng, ext);
   const ids = [...board.islandHexIds];
   if (ids.length) board.hexes[ids[0]].terrain = 'gold';
   ids.forEach((id) => { board.hexes[id].fog = true; });
@@ -536,12 +537,12 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   const tb = expansions.includes('traders-barbarians') && !seafarers && !ck;
   // サッカー熱。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士・交易と略奪との組み合わせは作っていない）
   const soccer = expansions.includes('soccer') && !ext && !seafarers && !ck && !tb;
-  // 探検家と海賊。同じく3〜4人・航海者版と同じ盤だけで使う想定（他の拡張との組み合わせはありません）
-  const ep = expansions.includes('explorers-pirates') && !ext && !seafarers && !ck && !tb && !soccer;
+  // 探検家と海賊。航海者版と同じ盤だけで使う想定（他の拡張との組み合わせはありません）。5〜6人なら5〜6人拡張の盤に自動で変わる
+  const ep = expansions.includes('explorers-pirates') && !seafarers && !ck && !tb && !soccer;
   const scenario = tb ? (TB_SCENARIOS.includes(options.scenario) ? options.scenario : 'fishermen') : null;
   let board;
   if (seafarers) board = buildSeafarersBoard(rng, ext);
-  else if (ep) board = buildExplorersBoard(rng);
+  else if (ep) board = buildExplorersBoard(rng, ext);
   else if (scenario === 'fishermen') board = buildFishermenBoard(rng, ext);
   else if (scenario === 'caravans') board = buildCaravansBoard(rng, ext);
   else if (soccer) board = buildSoccerBoard(rng);
