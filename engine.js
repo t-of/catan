@@ -769,7 +769,7 @@ export function setupPlaceRoad(game, edgeId) {
     v.hexIds.forEach((hId) => {
       const hex = game.board.hexes[hId];
       const res = TERRAIN_RESOURCE[hex.terrain];
-      if (res) game.players[idx].resources[res]++; // 蛮族の襲撃で2つ目が都市でも、資源は1枚のまま（公式どおり）
+      if (res) { game.players[idx].resources[res]++; game.bank.resources[res]--; } // 蛮族の襲撃で2つ目が都市でも、資源は1枚のまま（公式どおり）
     });
   }
   game.setupIndex++;
@@ -849,8 +849,20 @@ function distributeResources(game, total) {
   });
   RESOURCES.forEach((res) => {
     if (demand[res] === 0) return;
-    if (demand[res] > game.bank.resources[res]) { fire(game, 'shortage'); return; } // 銀行不足なら誰ももらえない
-    contributions.filter((c) => c.res === res).forEach((c) => {
+    const resContribs = contributions.filter((c) => c.res === res);
+    if (demand[res] > game.bank.resources[res]) {
+      fire(game, 'shortage');
+      const players = new Set(resContribs.map((c) => c.player));
+      if (players.size !== 1) return; // もらう人が2人以上なら、公式どおり誰ももらえない
+      const avail = game.bank.resources[res];
+      if (avail <= 0) return; // もらう人が1人だけなら、銀行に残っている分だけ渡す（公式どおり）
+      const owner = resContribs[0].player;
+      game.players[owner].resources[res] += avail;
+      (game.gains ||= []).push({ player: owner, res, amt: avail, hex: resContribs[0].hex });
+      game.bank.resources[res] = 0;
+      return;
+    }
+    resContribs.forEach((c) => {
       game.players[c.player].resources[res] += c.amt;
       (game.gains ||= []).push(c); // 演出のきっかけ。main.js が読んで clear する
     });
@@ -1088,6 +1100,7 @@ export function recalcLongestRoad(game) {
   const lens = game.players.map((_, i) => roadLengthForPlayer(game, i));
   game.players.forEach((p, i) => { p.roadLength = lens[i]; });
   assignBonus(game, lens, 5, 'longestRoadPlayer');
+  checkWinAll(game); // 最長交易路が本人以外に移ったときも、その人の勝利判定をする
 }
 function recalcLargestArmy(game) {
   const counts = game.players.map((p) => p.knightsPlayed);

@@ -64,6 +64,26 @@ test('セットアップ: 距離ルールと2周（順→逆）、2個目の開�
   g.players.forEach((p) => { assert.equal(p.settlements.length, 2); assert.equal(p.roads.length, 2); });
 });
 
+test('セットアップ: 2個目の開拓地の資源は銀行からも引かれる', () => {
+  const g = E.createGame(3, Math.random);
+  for (let i = 0; i < 3; i++) { // setup1を3人ぶん進めてsetup2に入る
+    const idx = E.currentPlayer(g);
+    const v = E.availableSettlementVertices(g, idx, true)[0];
+    E.setupPlaceSettlement(g, v);
+    E.setupPlaceRoad(g, g.board.vertices[v].edgeIds[0]);
+  }
+  assert.equal(g.phase, 'setup2');
+  const idx = E.currentPlayer(g);
+  const v = E.availableSettlementVertices(g, idx, true)[0];
+  E.setupPlaceSettlement(g, v);
+  const bankBefore = { ...g.bank.resources };
+  E.setupPlaceRoad(g, g.board.vertices[v].edgeIds[0]);
+  const after = g.players[idx].resources;
+  Object.keys(bankBefore).forEach((res) => {
+    assert.equal(bankBefore[res] - g.bank.resources[res], after[res]); // 配った枚数ぶん、銀行も減る
+  });
+});
+
 test('建設: コストが引かれ、銀行に戻る。足りないと失敗する', () => {
   const g = E.createGame(3, Math.random);
   g.phase = 'main'; g.turn = 0;
@@ -95,6 +115,67 @@ test('長い交易路: 直線の道は長さどおり。内部の頂点を敵に
   g.players[1].settlements.push(interior.id);
   E.recalcLongestRoad(g);
   assert.equal(g.players[0].roadLength, 1);
+});
+
+test('最長交易路: 建てた本人以外に移ったとき、その人の勝利判定もその場でされる', () => {
+  const g = E.createGame(3, Math.random);
+  const edgeBetween = (a, b) => g.board.vertices[a].edgeIds.find((e) => {
+    const ed = g.board.edges[e];
+    return (ed.v1 === a && ed.v2 === b) || (ed.v2 === a && ed.v1 === b);
+  });
+  // 長さ`length`の単純パスを探す(頂点の重複なし)。avoidに含む頂点は使わない。
+  // requireDegree3Atを指定すると、その位置の頂点は分断用の第三の辺を出せる(次数3)ものだけ選ぶ
+  function findPath(length, avoid, requireDegree3At) {
+    for (const start of g.board.vertices) {
+      if (avoid.has(start.id)) continue;
+      const path = [start.id];
+      const used = new Set();
+      const dfs = (vid) => {
+        if (requireDegree3At != null && path.length - 1 === requireDegree3At
+          && g.board.vertices[vid].edgeIds.length < 3) return false;
+        if (path.length === length + 1) return true;
+        for (const nb of g.board.vertices[vid].neighbors) {
+          if (avoid.has(nb) || path.includes(nb)) continue;
+          const e = edgeBetween(vid, nb);
+          if (used.has(e)) continue;
+          used.add(e); path.push(nb);
+          if (dfs(nb)) return true;
+          path.pop(); used.delete(e);
+        }
+        return false;
+      };
+      if (dfs(start.id)) {
+        const edges = [];
+        for (let i = 0; i < path.length - 1; i++) edges.push(edgeBetween(path[i], path[i + 1]));
+        return { vertices: path, edges };
+      }
+    }
+    return null;
+  }
+  // プレイヤー1に長さ6の最長交易路を持たせる（得点は0のまま、まだ勝てない）
+  const path1 = findPath(6, new Set(), 3); // 4番目の頂点(index3)で分断できるよう、そこは次数3にする
+  g.board.vertices[path1.vertices[0]].building = { owner: 1, type: 'settlement' };
+  g.players[1].settlements.push(path1.vertices[0]);
+  path1.edges.forEach((e) => { g.board.edges[e].road = 1; g.players[1].roads.push(e); });
+  E.recalcLongestRoad(g);
+  assert.equal(g.longestRoadPlayer, 1);
+  assert.equal(g.winner, null);
+  // プレイヤー2は別経路に長さ6の道を持ち、都市4つ(8点)を直接積んでおく(現状9点、最長交易路を奪えば11点)
+  const path2 = findPath(6, new Set(path1.vertices));
+  g.board.vertices[path2.vertices[0]].building = { owner: 2, type: 'settlement' };
+  g.players[2].settlements.push(path2.vertices[0]);
+  path2.edges.forEach((e) => { g.board.edges[e].road = 2; g.players[2].roads.push(e); });
+  g.players[2].cities.push(9001, 9002, 9003, 9004);
+  // プレイヤー1の道を分断する: path1の内部頂点にプレイヤー0が開拓地を建てる
+  const cutVertex = path1.vertices[3];
+  const approach = g.board.vertices[cutVertex].edgeIds.find((e) => !path1.edges.includes(e));
+  g.board.edges[approach].road = 0;
+  g.players[0].roads.push(approach);
+  g.players[0].resources = { wood: 1, brick: 1, sheep: 1, wheat: 1, ore: 0 };
+  g.phase = 'main'; g.turn = 0;
+  assert.ok(E.buildSettlement(g, cutVertex)); // これで内部で recalcLongestRoad が呼ばれ、最長交易路が2へ移る
+  assert.equal(g.longestRoadPlayer, 2);
+  assert.equal(g.winner, 2); // buildSettlement自身はプレイヤー0のcheckWinしか見ないが、recalcLongestRoadが2の勝利も拾う
 });
 
 test('発展カード: 買った手番には使えない。独占で資源を総取りできる', () => {
@@ -142,6 +223,23 @@ test('7が出たとき: 8枚以上の人だけ半分（切り捨て）捨てる'
   const dice = [0.4, 0.6]; // 3 + 4 = 7
   assert.equal(E.rollDice(g, () => dice.shift()), 7);
   assert.deepEqual(g.pendingDiscards, [{ player: 2, count: 4 }]);
+});
+
+test('資源の産出: 銀行不足でも、もらう人が1人だけなら残っている分だけ渡す', () => {
+  const g = E.createGame(3, Math.random);
+  g.phase = 'roll'; g.turn = 0;
+  g.bank.resources.ore = 1; // 銀行には鉄が1枚しかない
+  const mtn = g.board.hexes.find((h) => h.terrain === 'mountains' && h.number != null);
+  const vid = mtn.vertexIds[0];
+  g.board.vertices[vid].building = { owner: 0, type: 'city' }; // 都市なので鉄2枚を要求するが、要求者は0だけ
+  g.players[0].cities.push(vid);
+  const d1 = mtn.number <= 7 ? 1 : mtn.number - 6;
+  const d2 = mtn.number - d1;
+  const dice = [(d1 - 0.5) / 6, (d2 - 0.5) / 6];
+  assert.equal(E.rollDice(g, () => dice.shift()), mtn.number);
+  assert.equal(g.players[0].resources.ore, 1); // 2枚要求したが、残っていた1枚だけもらえる
+  assert.equal(g.bank.resources.ore, 0);
+  assert.ok(g.events.includes('shortage'));
 });
 
 test('勝利判定: 得点が10に届くと winner が立つ', () => {
