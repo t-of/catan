@@ -1146,6 +1146,108 @@ test('交易と略奪・蛮族の襲撃: CPUだけで4人、数局きちんと�
   }
 });
 
+// ---- サッカー熱 ----
+
+test('サッカー熱: 盤の準備（サッカー場2マス、出目12のマスに2のチップも足す、盗賊は盤の外、勝利点11点）', () => {
+  for (let i = 0; i < 10; i++) {
+    const g = E.createGame(4, Math.random, { expansions: ['soccer'] });
+    assert.deepEqual(g.expansions, ['soccer']);
+    assert.equal(g.board.hexes.length, 19);
+    const pitches = g.board.hexes.filter((h) => h.terrain === 'pitch');
+    assert.equal(pitches.length, 2);
+    assert.deepEqual(g.board.pitchHexIds.slice().sort((a, b) => a - b), pitches.map((h) => h.id).sort((a, b) => a - b));
+    const twelve = g.board.hexes.find((h) => h.number === 12);
+    assert.equal(twelve.number2, 2); // 置き換えたサッカー場ぶんの「2」チップが「12」のマスに足される
+    assert.equal(g.board.robberHex, null); // 砂漠がないので、盗賊は最初の7が出るまで盤の外
+    assert.equal(g.winTarget, 11);
+    assert.equal(g.soccerMaxDay, 15);
+    assert.equal(g.soccerDay, 1);
+    assert.equal(g.players[0].socShots, 1);
+  }
+  const g3 = E.createGame(3, Math.random, { expansions: ['soccer'] });
+  assert.equal(g3.soccerMaxDay, 12);
+});
+
+test('サッカー熱: サッカー場に接する開拓地・都市を建てると持ち駒が増える', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['soccer'] });
+  const idx = E.currentPlayer(g);
+  const pitchSet = new Set(g.board.pitchHexIds);
+  const v = E.availableSettlementVertices(g, idx, true).find((vid) => g.board.vertices[vid].hexIds.some((h) => pitchSet.has(h)));
+  assert.ok(v != null, 'サッカー場に接する置き場所が見つからない');
+  assert.equal(g.players[idx].socShots, 1);
+  assert.ok(E.setupPlaceSettlement(g, v));
+  assert.equal(g.players[idx].socShots, 2);
+});
+
+test('サッカー熱: 開拓地・都市を建てると手番の終わりに1回だけ試合が行われる', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['soccer'] });
+  while (g.phase === 'setup1' || g.phase === 'setup2') {
+    const idx = E.currentPlayer(g);
+    if (g.setupPending === 'settlement') E.setupPlaceSettlement(g, E.availableSettlementVertices(g, idx, true)[0]);
+    else E.setupPlaceRoad(g, g.board.vertices[g.setupLastVertex].edgeIds.find((eId) => g.board.edges[eId].road == null));
+  }
+  assert.equal(g.phase, 'roll');
+  g.turn = 0; g.phase = 'main';
+  const p0 = g.players[0];
+  let v = null;
+  for (let i = 0; i < 8 && !v; i++) {
+    v = E.availableSettlementVertices(g, 0, false)[0];
+    if (v) break;
+    const edges = E.availableRoadEdges(g, 0);
+    if (!edges.length) break;
+    p0.resources.wood = 1; p0.resources.brick = 1;
+    E.buildRoad(g, edges[0]);
+  }
+  assert.ok(v != null);
+  p0.resources = { wood: 1, brick: 1, sheep: 1, wheat: 1, ore: 0 };
+  assert.equal(g.soccerDay, 1);
+  assert.ok(E.buildSettlement(g, v));
+  assert.equal(g.pendingSoccerMatch, true);
+  assert.equal(g.soccerLastResult, null); // まだ手番の終わりになっていない
+  assert.ok(E.endTurn(g));
+  assert.equal(g.pendingSoccerMatch, false);
+  assert.equal(g.soccerDay, 2);
+  assert.ok(g.soccerLastResult);
+  assert.equal(g.soccerLastResult.day, 1);
+  assert.equal(g.soccerLastResult.results.length, 2); // 4人は1節に2試合
+  const totalPoints = g.players.reduce((a, pl) => a + pl.socPoints, 0);
+  assert.ok(totalPoints >= 2 && totalPoints <= 6);
+});
+
+test('サッカー熱: 対戦表は4人なら3節で全6組、3人なら同じ人が2試合こなす', () => {
+  const seen = new Set();
+  for (let day = 1; day <= 3; day++) {
+    E.soccerFixturesForDay(4, day).forEach(([a, b]) => seen.add([a, b].sort().join('-')));
+  }
+  assert.equal(seen.size, 6);
+  for (let day = 1; day <= 3; day++) {
+    const fixtures = E.soccerFixturesForDay(3, day);
+    assert.equal(fixtures[0][0], fixtures[1][0]); // ダブルプレイヤーが両方の試合に出る
+  }
+});
+
+test('サッカー熱: 順位表は同点を分け合い、勝利点は1位+3・2位+2・3位+1・4位+0', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['soccer'] });
+  g.players[0].socPoints = 10; g.players[1].socPoints = 10; g.players[2].socPoints = 5; g.players[3].socPoints = 0;
+  const s = E.soccerStandings(g);
+  assert.equal(s[0].place, 1); assert.equal(s[0].vp, 3);
+  assert.equal(s[1].place, 1); assert.equal(s[1].vp, 3);
+  assert.equal(s[2].place, 3); assert.equal(s[2].vp, 1); // 2位を2人が分け合ったので、次は3位から
+  assert.equal(s[3].place, 4); assert.equal(s[3].vp, 0);
+  assert.equal(E.playerScore(g, 0), 3); // 建物など他に何もないので、サッカーの順位点だけが勝利点になる
+});
+
+test('サッカー熱: CPUだけで3人・4人、数局きちんと決着する(勝利点11点)', () => {
+  [[3, ['weak', 'normal', 'strong']], [4, ['weak', 'normal', 'strong', 'normal']]].forEach(([, levels]) => {
+    for (let i = 0; i < 2; i++) {
+      const g = playOutCpu(levels, 800000, { expansions: ['soccer'] });
+      assert.deepEqual(g.expansions, ['soccer']);
+      assert.ok(g.winner != null);
+      assert.ok(E.playerScore(g, g.winner) >= 11);
+    }
+  });
+});
+
 test('プレイヤー名: 指定すればログに使われ、空ならプレイヤーNのまま', () => {
   const g = E.createGame(3, Math.random, { names: ['あやか', '', 'CPUくん'] });
   assert.equal(g.players[0].name, 'あやか');

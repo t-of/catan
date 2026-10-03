@@ -120,6 +120,7 @@ export const TERRAIN_STYLE = {
   gold: { edge: '#c79a2c', grad: 'gold' },
   lake: { edge: '#0e5265', grad: 'water' }, // 漁師: 砂漠の代わりの湖（水のグラデーションを流用）
   castle: { edge: '#596070', grad: 'mountain' }, // 蛮族の襲撃: 砦（山のグラデーションを流用）
+  pitch: { edge: '#1d6b2c', grad: 'pasture' }, // サッカー熱: サッカー場（牧草のグラデーションを流用）
 };
 
 // タイルの上に乗る地形ごとの絵（中心 x,y。R=66 の六角形を前提にした配置）
@@ -168,6 +169,13 @@ export function terrainDecor(a, terrain, x, y) {
     add(a, 'M' + (x - 36) + ',' + (y - 6) + ' q18,-10 36,0 t34,0', 'none', 0.3, '#bfe6ee', 2);
     add(a, 'M' + (x - 30) + ',' + (y + 22) + ' q15,-9 30,0 t28,0', 'none', 0.22, '#bfe6ee', 2);
     tag(a, n, 'a-wave', x, y, 0);
+  } else if (terrain === 'pitch') {
+    add(a, 'M' + (x - 54) + ',' + y + ' L' + (x + 54) + ',' + y, 'none', 0.8, '#eafbe0', 3);
+    add(a, ell(x, y, 16, 16), 'none', 0.8, '#eafbe0', 3);
+    add(a, ell(x, y, 2.4, 2.4), '#eafbe0', 0.9);
+    [[-30, 0], [30, 0]].forEach(([dx]) => add(a, rect(x + dx - 1.5, y - 10, 3, 20), '#eafbe0', 0.6));
+    add(a, ell(x - 2, y + 2, 7, 7), '#fdfdfd', 1, '#2a211b', 1.4);
+    [[0, -3], [-3, 2], [3, 2]].forEach(([dx, dy]) => add(a, ell(x - 2 + dx, y + 2 + dy, 1.8, 1.8), '#2a211b', 0.85));
   } else if (terrain === 'gold') {
     [[-20, -14], [18, -22], [26, 18], [-24, 22], [0, 2]].forEach(([dx, dy], i) => {
       const n = a.length;

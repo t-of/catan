@@ -86,6 +86,7 @@ const els = {
   playersBar: document.getElementById('playersBar'),
   bankPanel: document.getElementById('bankPanel'),
   ckPanel: document.getElementById('ckPanel'),
+  soccerPanel: document.getElementById('soccerPanel'),
   handBar: document.getElementById('handBar'),
   handCount: document.getElementById('handCount'),
   buildGrid: document.getElementById('buildGrid'),
@@ -190,7 +191,7 @@ syncCountPicker();
 // ---- 拡張選び（3〜4人だけ選べる。5〜6人は自動で5〜6人拡張） ----
 // 他の拡張（都市と騎士・交易と略奪）も、ここに data-expansion の選択肢を足していくだけで並べられる形にする。
 let expansion = load('expansion', 'none');
-if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians'].includes(expansion)) expansion = 'none';
+if (!['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'soccer'].includes(expansion)) expansion = 'none';
 let scenario = load('scenario', 'fishermen');
 if (!E.TB_SCENARIOS.includes(scenario)) scenario = 'fishermen';
 els.expansionPicker.addEventListener('click', (e) => {
@@ -309,7 +310,18 @@ function migrateGame(g) {
     if (p.warKnights === undefined) p.warKnights = g.scenario === 'barbarians' ? [] : null;
     if (p.prisoners == null) p.prisoners = 0;
     if (p.pendingCamelBuilds == null) p.pendingCamelBuilds = 0;
+    if (p.socShots == null) p.socShots = 0;
+    if (p.socPoints == null) p.socPoints = 0;
   });
+  // 古い保存（サッカー熱より前）には soccer がないので、「なし」として引き継ぐ
+  g.soccer = !!g.soccer;
+  if (g.soccer) {
+    g.soccerDay = g.soccerDay || 1;
+    g.soccerMaxDay = g.soccerMaxDay || (g.playerCount === 3 ? 12 : 15);
+    g.soccerSeasonOver = !!g.soccerSeasonOver;
+    g.pendingSoccerMatch = !!g.pendingSoccerMatch;
+    g.soccerLastResult = g.soccerLastResult || null;
+  }
   if (g.scenario === 'fishermen') { g.fishBag = g.fishBag || []; g.fishUsed = g.fishUsed || []; }
   if (g.scenario === 'caravans' && g.board.camelEdgeA !== undefined) {
     // 古い（投票より前の）隊商の保存は、盤の形が変わっているので続きからは諦めて空のキャラバンとして引き継ぐ
@@ -558,6 +570,13 @@ function renderBoardInto(svg, g, uiState) {
       labels.push({ x: cx, y: cy - 3, t: String(hex.number), f: hot ? '#b8321f' : '#2a211b', s: hot ? 21 : 19, w: 700 });
       const dots = 6 - Math.abs(7 - hex.number);
       for (let d = 0; d < dots; d++) I.add(S, I.ell(cx - (dots - 1) * 2.4 + d * 4.8, cy + 10, 1.3, 1.3), hot ? '#b8321f' : '#2a211b');
+    }
+    // サッカー熱: 置き換えたサッカー場ぶんのチップを足した2枚目の数字チップ
+    if (hex.number2 != null) {
+      const nx = cx + 24, ny = cy - 16;
+      I.add(S, I.ell(nx + 1, ny + 2, 12, 12), '#000', 0.28);
+      I.add(S, I.ell(nx, ny, 11, 11), `url(#${svg.id}-g-token)`, 1, '#c7b58b', 1);
+      labels.push({ x: nx, y: ny + 3, t: String(hex.number2), f: '#2a211b', s: 12, w: 700 });
     }
   });
 
@@ -970,6 +989,45 @@ function renderCk() {
     tradeBtn.disabled = !humansTurn() || game.phase !== 'main' || !E.COMMODITIES.some((c) => (p.commodities[c] || 0) >= 2);
     tradeBtn.addEventListener('click', () => { ui = { mode: 'tradeCommodity', data: {} }; renderAll(); });
     els.ckPanel.appendChild(tradeBtn);
+  }
+}
+
+// ================================================================
+// サッカー熱: サイドの要約（自分の持ち駒・順位表・直前の試合結果）
+// ================================================================
+function renderSoccer() {
+  if (!game.soccer) { els.soccerPanel.hidden = true; return; }
+  els.soccerPanel.hidden = false;
+  const idx = E.currentPlayer(game);
+  const p = game.players[idx];
+  els.soccerPanel.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'panel__head';
+  head.innerHTML = `<span>サッカー熱</span><span>${game.soccerSeasonOver ? 'シーズン終了' : `第${game.soccerDay}/${game.soccerMaxDay}節`}</span>`;
+  els.soccerPanel.appendChild(head);
+  const shotRow = document.createElement('div');
+  shotRow.className = 'ck-row';
+  const shotCell = document.createElement('span');
+  shotCell.className = 'ck-chip';
+  shotCell.textContent = `持ち駒 ${p.socShots}/6`;
+  shotRow.appendChild(shotCell);
+  els.soccerPanel.appendChild(shotRow);
+  const standings = E.soccerStandings(game);
+  const table = document.createElement('div');
+  table.className = 'ck-row';
+  game.players.forEach((pl, i) => {
+    const s = standings[i];
+    const cell = document.createElement('span');
+    cell.className = `ck-chip${i === idx ? ' is-active' : ''}`;
+    cell.textContent = `${s.place}位 ${pl.name} ${s.points}点(+${s.vp})`;
+    table.appendChild(cell);
+  });
+  els.soccerPanel.appendChild(table);
+  if (game.soccerLastResult) {
+    const last = document.createElement('div');
+    last.className = 'ck-row';
+    last.textContent = `第${game.soccerLastResult.day}節: ${game.soccerLastResult.results.map((r) => `${game.players[r.a].name} ${r.golsA}-${r.golsB} ${game.players[r.b].name}`).join(' / ')}`;
+    els.soccerPanel.appendChild(last);
   }
 }
 
@@ -1963,6 +2021,7 @@ function renderAll() {
   renderBank();
   renderHand();
   renderCk();
+  renderSoccer();
   renderBuildGrid();
   renderBanner();
   renderActionBar();

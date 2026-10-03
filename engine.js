@@ -9,8 +9,9 @@ export const RESOURCE_LABEL = { wood: '木材', brick: '土', sheep: '羊', whea
 export const TERRAIN_LABEL = {
   forest: '森', hills: '丘', pasture: '牧草', field: '畑', mountains: '山', desert: '砂漠', water: '海', gold: '金の川',
   lake: '湖', castle: '砦', // 交易と略奪: 漁師の湖、蛮族の襲撃の砦（どちらも産出しない）
+  pitch: 'サッカー場', // サッカー熱（産出しない）
 };
-const TERRAIN_RESOURCE = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore', desert: null, water: null, gold: null, lake: null, castle: null };
+const TERRAIN_RESOURCE = { forest: 'wood', hills: 'brick', pasture: 'sheep', field: 'wheat', mountains: 'ore', desert: null, water: null, gold: null, lake: null, castle: null, pitch: null };
 const TERRAIN_COUNTS = { forest: 4, hills: 3, pasture: 4, field: 4, mountains: 3, desert: 1 };
 const NUMBER_TOKENS = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
 const PORT_TYPES = ['3:1', '3:1', '3:1', '3:1', 'wood', 'brick', 'sheep', 'wheat', 'ore'];
@@ -87,6 +88,14 @@ const EVENT_FACES = ['barbarian', 'barbarian', 'barbarian', 'trade', 'politics',
 const BARBARIAN_ATTACK_AT = 7;
 
 // ---- 交易と略奪（公式ルールブック Traders & Barbarians に沿わせた簡略版。3〜4人・基本盤だけに対応） ----
+// ---- サッカー熱（公式シナリオ Fußballfieber を簡略化。3〜4人・基本盤だけ） ----
+// 専用の盤・物理の試合台紙は使わず、2つのサッカー場マスと進み方を計算で置き換える（README に注記）。
+export const SOCCER_TRACK_LENGTH = 18; // フットボールレーン（簡略化。公式は専用のボード）の長さ
+export const SOCCER_CUP_POS = 18; // ここに届く（または越える）とシーズンが即終わる「ポカール」
+export const SOCCER_BONUS = { 3: 'resource', 6: 'devcard', 9: 'resource', 12: 'devcard', 15: 'resource' }; // 通過でもらえるボーナス
+const SOCCER_MAX_SHOTS = 6; // 1人6枚の持ち駒（攻撃回数）が上限
+const SOCCER_DAYS = { 3: 12, 4: 15 }; // 公式どおりの試合日数
+
 export const TB_SCENARIOS = ['fishermen', 'rivers', 'caravans', 'barbarians'];
 export const TB_SCENARIO_LABEL = { fishermen: '漁師', rivers: '川', caravans: '隊商', barbarians: '蛮族の襲撃' };
 const TB_WIN_TARGET = { fishermen: 10, rivers: 10, caravans: 12, barbarians: 12 }; // 公式どおり（漁師は古い靴を持つ人だけ+1点で11点）
@@ -442,6 +451,41 @@ function applyBarbarianBoard(board, rng) {
 }
 function barbarianTargetHexes(board) { return board.hexes.filter((h) => h.id !== board.castleHexId && h.terrain !== 'desert'); }
 
+// サッカー熱: 砂漠を盤の中心のサッカー場にし、もう1つは出目「2」のマスを置き換える。
+// 置き換えたマスの「2」チップは、そのぶん出目チップの枚数が減らないよう、出目「12」のマスへ足す（2マス目のチップとして hex.number2 に持たせる）。
+// 公式は専用フレームで物理のランドスケープ駒を移し替えるが、デジタル版なのでマスを直接サッカー場に変える簡略化（README に注記）。
+function buildSoccerBoard(rng) {
+  const board = buildBoard(rng, false);
+  const center = board.hexes.find((h) => h.q === 0 && h.r === 0);
+  const desert = board.hexes.find((h) => h.terrain === 'desert');
+  if (center.id !== desert.id) {
+    const dt = desert.terrain, dn = desert.number;
+    desert.terrain = center.terrain; desert.number = center.number;
+    center.terrain = dt; center.number = dn;
+  }
+  center.terrain = 'pitch'; center.number = null;
+  const two = board.hexes.find((h) => h.id !== center.id && h.number === 2);
+  const twelve = board.hexes.find((h) => h.id !== center.id && h.number === 12);
+  if (two) { two.terrain = 'pitch'; two.number = null; if (twelve) twelve.number2 = 2; }
+  board.pitchHexIds = [center.id, ...(two ? [two.id] : [])];
+  board.robberHex = null; // 砂漠がないので、盗賊は最初の7が出るまで盤の外（公式どおり）
+  return board;
+}
+// サッカー熱: 第 day 節（1始まり）の対戦カード。公式の「スケジュール表」を、循環式の総当たり計算に置き換える（README に注記）。
+// 4人: 3節で全6組の対戦が1巡し、15節=5巡。3人: ダブルプレイヤー（2試合こなす人）が3節で一巡し、12節=4巡。
+export function soccerFixturesForDay(playerCount, day) {
+  if (playerCount === 4) {
+    const rot = (day - 1) % 3;
+    const others = [1, 2, 3];
+    for (let i = 0; i < rot; i++) others.push(others.shift());
+    return [[0, others[2]], [others[0], others[1]]];
+  }
+  const order = [0, 1, 2];
+  const double = order[(day - 1) % 3];
+  const others = order.filter((x) => x !== double);
+  return [[double, others[0]], [double, others[1]]];
+}
+
 // ================================================================
 // ゲームの作成
 // options.expansions: 使う拡張の名前の配列（今は '5-6player' だけ実装。5〜6人を選ぶと自動で足される）。
@@ -455,11 +499,14 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
   const ck = expansions.includes('cities-knights'); // 都市と騎士。3〜4人・基本盤だけで使う想定（航海者版・5〜6人との組み合わせは作っていない）
   // 交易と略奪。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士との組み合わせは作っていない）
   const tb = expansions.includes('traders-barbarians') && !ext && !seafarers && !ck;
+  // サッカー熱。同じく3〜4人・基本盤だけで使う想定（航海者版・5〜6人・都市と騎士・交易と略奪との組み合わせは作っていない）
+  const soccer = expansions.includes('soccer') && !ext && !seafarers && !ck && !tb;
   const scenario = tb ? (TB_SCENARIOS.includes(options.scenario) ? options.scenario : 'fishermen') : null;
   let board;
   if (seafarers) board = buildSeafarersBoard(rng);
   else if (scenario === 'fishermen') board = buildFishermenBoard(rng);
   else if (scenario === 'caravans') board = buildCaravansBoard(rng);
+  else if (soccer) board = buildSoccerBoard(rng);
   else board = buildBoard(rng, ext);
   if (scenario === 'rivers') applyRiver(board);
   else if (scenario === 'barbarians') applyBarbarianBoard(board, rng);
@@ -491,6 +538,9 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     warKnights: scenario === 'barbarians' ? [] : null, // { id, edgeId }
     prisoners: scenario === 'barbarians' ? 0 : 0,
     pendingCamelBuilds: 0, // 隊商: この手番に建てた開拓地・都市の数（手番の終わりにラクダを置く）
+    // サッカー熱（soccer=trueのときだけ使う）
+    socShots: soccer ? 1 : 0, // 持ち駒（攻撃回数）。最初の組み合わせで1枚使うので1から始まる（上限6）
+    socPoints: 0, // フットボールレーンの位置
   }));
   const setupOrder = Array.from({ length: playerCount }, (_, i) => i); // 1周目は順に。2周目は setup2 で逆順にする
   const game = {
@@ -514,7 +564,13 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     devCardPlayedThisTurn: false,
     shipMovedThisTurn: false, // 航海者版: 手番に船を動かせるのは1回だけ
     scenario,
-    winTarget: ck ? 13 : (seafarers ? 14 : (scenario ? TB_WIN_TARGET[scenario] : 10)),
+    soccer,
+    soccerDay: soccer ? 1 : 0,
+    soccerMaxDay: soccer ? SOCCER_DAYS[playerCount] : 0,
+    soccerSeasonOver: false,
+    pendingSoccerMatch: false,
+    soccerLastResult: null,
+    winTarget: ck ? 13 : (soccer ? 11 : (seafarers ? 14 : (scenario ? TB_WIN_TARGET[scenario] : 10))),
     richPlayer: null, // 川: 金貨が一番多い人だけ(+1点)
     poorPlayers: [], // 川: 金貨が一番少ない人たち（同点なら全員）(-2点ずつ)
     oldBootHolder: null, // 漁師: 古い靴を持つ人（勝利点が+1点多く要る）
@@ -587,7 +643,25 @@ export function playerScore(game, idx) {
   if (game.scenario === 'barbarians') {
     score += Math.floor((p.prisoners || 0) / 2); // 捕虜2人につき勝利点1
   }
+  if (game.soccer) {
+    score += soccerStandings(game)[idx].vp;
+  }
   return score;
+}
+// サッカー熱: フットボールレーンの順位表。同点は同じ順位を分け合い、次の順位をその人数ぶん飛ばす（公式どおり）
+export function soccerStandings(game) {
+  const order = game.players.map((_, i) => i).sort((a, b) => game.players[b].socPoints - game.players[a].socPoints);
+  const out = new Array(game.playerCount);
+  let place = 1, i = 0;
+  while (i < order.length) {
+    let j = i;
+    while (j < order.length && game.players[order[j]].socPoints === game.players[order[i]].socPoints) j++;
+    const vp = Math.max(0, 4 - place);
+    for (let k = i; k < j; k++) out[order[k]] = { idx: order[k], points: game.players[order[k]].socPoints, place, vp };
+    place += (j - i);
+    i = j;
+  }
+  return out;
 }
 // 漁師: 古い靴を持つ人は勝利点が1点多く要る（公式どおり。10点が標準、古い靴は11点）
 export function winTargetFor(game, idx) {
@@ -617,6 +691,16 @@ function markIslandBonus(game, idx, vertexId) {
   game.players[idx].islandBonus = true;
   log(game, `${playerName(game, idx)}が新しい島に開拓地を建てた（+2点）`);
   checkWin(game, idx);
+}
+// サッカー熱: サッカー場に接する開拓地・都市を建てるたびに、持ち駒（攻撃回数）を1枚増やす（上限6枚、公式どおり）
+function grantSoccerShot(game, idx, vertexId) {
+  if (!game.soccer) return;
+  const v = game.board.vertices[vertexId];
+  if (!v.hexIds.some((h) => game.board.hexes[h].terrain === 'pitch')) return;
+  const p = game.players[idx];
+  if (p.socShots >= SOCCER_MAX_SHOTS) return;
+  p.socShots++;
+  log(game, `${playerName(game, idx)}のサッカーの持ち駒が${p.socShots}枚になった`);
 }
 
 // ---- 建設できる場所 ----
@@ -747,6 +831,7 @@ export function setupPlaceSettlement(game, vertexId) {
   if (asCity) game.players[idx].cities.push(vertexId); else game.players[idx].settlements.push(vertexId);
   markIslandBonus(game, idx, vertexId);
   grantRiverGold(game, idx, vertexId, 'vertex');
+  grantSoccerShot(game, idx, vertexId);
   game.setupLastVertex = vertexId;
   game.setupPending = 'road';
   fire(game, 'build');
@@ -818,7 +903,8 @@ function distributeResources(game, total) {
   const commodityContribs = [];
   const goldDemand = {}; // 金の川マス: 資源は確定させず、あとで本人に選ばせる（player → 枚数）
   game.board.hexes.forEach((hex) => {
-    if (hex.number !== total || hex.id === game.board.robberHex || hex.conquered) return; // 蛮族の襲撃: 征服されたマスは産出しない
+    // サッカー熱: 出目「12」のマスは hex.number2 の「2」でも産出する（置き換えたサッカー場ぶんのチップを足したもの）
+    if ((hex.number !== total && hex.number2 !== total) || hex.id === game.board.robberHex || hex.conquered) return; // 蛮族の襲撃: 征服されたマスは産出しない
     if (hex.terrain === 'gold') {
       hex.vertexIds.forEach((vid) => {
         const v = game.board.vertices[vid];
@@ -898,7 +984,7 @@ export function hitHexIds(game, total) {
   if (total === 7) return [];
   return game.board.hexes
     .filter((hex) => hex.id !== game.board.robberHex && !hex.conquered
-      && (hex.number === total || (hex.terrain === 'lake' && hex.lakeNumbers && hex.lakeNumbers.includes(total))))
+      && (hex.number === total || hex.number2 === total || (hex.terrain === 'lake' && hex.lakeNumbers && hex.lakeNumbers.includes(total))))
     .map((hex) => hex.id);
 }
 
@@ -1146,10 +1232,12 @@ export function buildSettlement(game, vertexId) {
   p.settlements.push(vertexId);
   markIslandBonus(game, idx, vertexId);
   grantRiverGold(game, idx, vertexId, 'vertex');
+  grantSoccerShot(game, idx, vertexId);
   queueCamelBuild(game);
   fire(game, 'build');
   recalcLongestRoad(game); // 相手の道を分断することがある
-  checkWin(game, idx);
+  // サッカー熱: この手番の終わりに試合が入り、順位の勝利点が動くことがあるので、判定は手番の終わりに回す（公式の「手番の終わりに判定」どおり）
+  if (game.soccer && !game.soccerSeasonOver) game.pendingSoccerMatch = true; else checkWin(game, idx);
   if (game.scenario === 'barbarians') resolveBarbarianLanding(game, idx);
   return true;
 }
@@ -1166,9 +1254,10 @@ export function buildCity(game, vertexId) {
   v.building = { owner: idx, type: 'city' };
   p.settlements = p.settlements.filter((id) => id !== vertexId);
   p.cities.push(vertexId);
+  grantSoccerShot(game, idx, vertexId);
   queueCamelBuild(game);
   fire(game, 'build');
-  checkWin(game, idx);
+  if (game.soccer && !game.soccerSeasonOver) game.pendingSoccerMatch = true; else checkWin(game, idx);
   if (game.scenario === 'barbarians') resolveBarbarianLanding(game, idx);
   return true;
 }
@@ -2154,10 +2243,62 @@ function finishAdvanceTurn(game) {
   game.shipMovedThisTurn = false;
   game.players.forEach((p) => { p.goldSpendsThisTurn = 0; });
 }
+// サッカー熱: n回攻撃して何点入るか（両面チップを投げる代わりに、1回ごとに50%で1ゴール）
+function soccerPlayShots(n) {
+  let goals = 0;
+  for (let i = 0; i < n; i++) if (Math.random() < 0.5) goals++;
+  return goals;
+}
+// サッカー熱: フットボールレーンの通過マスのボーナス（資源はランダムに1種、公式は自分で選べるが簡略化。README に注記）
+function grantSoccerBonus(game, idx, kind) {
+  if (kind === 'devcard') {
+    if (!game.bank.devDeck.length) return;
+    const type = game.bank.devDeck.pop();
+    game.players[idx].devCards.push({ type, boughtTurn: game.turnNumber, played: false });
+    log(game, `${playerName(game, idx)}がフットボールレーンのボーナスで発展カードを引いた`);
+  } else {
+    const avail = RESOURCES.filter((r) => game.bank.resources[r] > 0);
+    if (!avail.length) return;
+    const r = avail[Math.floor(Math.random() * avail.length)];
+    game.bank.resources[r]--; game.players[idx].resources[r]++;
+    log(game, `${playerName(game, idx)}がフットボールレーンのボーナスで${RESOURCE_LABEL[r]}を1枚もらった`);
+  }
+}
+function applySoccerPoints(game, idx, pts) {
+  if (pts <= 0) return;
+  const p = game.players[idx];
+  const old = p.socPoints;
+  p.socPoints = old + pts;
+  Object.keys(SOCCER_BONUS).forEach((posStr) => {
+    const pos = Number(posStr);
+    if (pos > old && pos <= p.socPoints) grantSoccerBonus(game, idx, SOCCER_BONUS[pos]);
+  });
+}
+// サッカー熱: 1節ぶんの対戦をまとめて行う（2試合を順番に。3人戦はダブルプレイヤーの2試合も両方そのまま数える＝公式の「数えない」選択は省く。README に注記）
+function resolveSoccerMatchday(game) {
+  const fixtures = soccerFixturesForDay(game.playerCount, game.soccerDay);
+  const results = fixtures.map(([a, b]) => {
+    const golsA = soccerPlayShots(game.players[a].socShots);
+    const golsB = soccerPlayShots(game.players[b].socShots);
+    let ptsA = 0, ptsB = 0;
+    if (golsA > golsB) ptsA = 3; else if (golsB > golsA) ptsB = 3; else { ptsA = 1; ptsB = 1; }
+    applySoccerPoints(game, a, ptsA);
+    applySoccerPoints(game, b, ptsB);
+    return { a, b, golsA, golsB, ptsA, ptsB };
+  });
+  log(game, `サッカー第${game.soccerDay}節: ${results.map((r) => `${playerName(game, r.a)} ${r.golsA}-${r.golsB} ${playerName(game, r.b)}`).join(' / ')}`);
+  game.soccerLastResult = { day: game.soccerDay, results };
+  game.soccerDay++;
+  if (game.soccerDay > game.soccerMaxDay || game.players.some((p) => p.socPoints >= SOCCER_CUP_POS)) game.soccerSeasonOver = true;
+  fire(game, 'build');
+  checkWinAll(game); // 試合の結果で順位の勝利点が動き、誰かが勝利点に届くことがある
+}
 export function endTurn(game) {
   if (game.phase !== 'main') return false;
   game.devCardPlayedThisTurn = false;
   if (game.scenario === 'barbarians') resolveBarbarianExpel(game, game.turn);
+  if (game.soccer && game.pendingSoccerMatch && !game.soccerSeasonOver) resolveSoccerMatchday(game);
+  game.pendingSoccerMatch = false;
   if (game.expansions && game.expansions.includes('5-6player')) { startSpecialBuilding(game); return true; }
   // 隊商: 手番の間に建てた分だけ、ラクダの投票→配置を済ませてから次の手番に進む
   if (game.scenario === 'caravans' && game.players[game.turn].pendingCamelBuilds > 0) { resumeCamelOrTurn(game); return true; }
