@@ -178,15 +178,24 @@ export function terrainDecor(a, terrain, x, y) {
   }
 }
 
-// 丸太（切り口を右に斜めに向け、胴を左の奥へ見せる）。cx,cy は切り口の中心、r は半径
-function log(a, cx, cy, r) {
-  const bx = cx - 1.1 * r, by = cy - 0.3 * r; // 奥の端
-  const rx = 0.65 * r; // 斜めから見た切り口の横幅
-  add(a, ell(bx, by, rx, r), '#6b4424');
-  add(a, poly([[cx, cy - r], [bx, by - r], [bx, by + r], [cx, cy + r]]), '#8a5a32');
-  add(a, poly([[cx, cy - r], [bx, by - r], [bx, by - 0.4 * r], [cx, cy - 0.4 * r]]), '#a8743f');
-  add(a, ell(cx, cy, rx, r), '#e3b97c', 1, '#6b4424', 1.2);
-  add(a, ell(cx, cy, rx * 0.5, r * 0.5), 'none', 1, '#b9834a', 0.8);
+// 丸太を3本積む（下2本・上1本）。切り口は左下の手前、胴は右上の奥へのびる。
+// 胴を全部描いてから切り口を描くので、重なっても切り口が隠れない
+function logPile(a) {
+  const r = 6, ox = 9, oy = -6; // 半径と、手前の切り口から奥の端までのずれ
+  const ends = [[12, 21], [8, 32], [21, 32]];
+  const px = 0.55 * r, py = 0.83 * r; // 胴のふち（のびる向きに直交）
+  ends.forEach(([x, y]) => {
+    const bx = x + ox, by = y + oy;
+    add(a, ell(bx, by, 0.8 * r, r), '#6b4424', 1, '#4a2e17', 1.2);
+    add(a, poly([[x - px, y - py], [bx - px, by - py], [bx + px, by + py], [x + px, y + py]]), '#8a5a32');
+    add(a, line(x - px, y - py, bx - px, by - py), 'none', 1, '#4a2e17', 1.2);
+    add(a, line(x + px, y + py, bx + px, by + py), 'none', 1, '#4a2e17', 1.2);
+    add(a, line(x - 0.2 * r, y - 0.45 * r, bx - 0.2 * r, by - 0.45 * r), 'none', 1, '#b07a44', 1.4);
+  });
+  ends.forEach(([x, y]) => {
+    add(a, ell(x, y, 0.8 * r, r), '#e8c48a', 1, '#4a2e17', 1.2);
+    add(a, ell(x, y, 0.42 * r, 0.52 * r), 'none', 1, '#b9834a', 0.9);
+  });
 }
 // 岩のかたまり（左が明るく右が暗いごつごつした形）。x,y は底の中心
 function rock(a, x, y, s) {
@@ -198,11 +207,11 @@ function rock(a, x, y, s) {
 
 // 手札・コスト表示などの小さなアイコン（40x40 の中）
 export function resourceIcon(a, kind) {
-  if (kind === 'wood') { add(a, ell(20, 35, 15, 2.5), '#3a2410', 0.3); log(a, 29, 29, 6.5); log(a, 15, 29, 6.5); log(a, 23, 17.5, 6.5); }
+  if (kind === 'wood') { add(a, ell(21, 37, 16, 2.2), '#3a2410', 0.3); logPile(a); }
   if (kind === 'brick') bricks(a, 20, 32, 1.2);
   if (kind === 'sheep') sheep(a, 18, 30, 1.3);
   if (kind === 'wheat') sheaf(a, 20, 36, 1.3);
-  if (kind === 'ore') { add(a, ell(20, 34, 16, 2.5), '#1e222b', 0.3); rock(a, 18, 34, 1); rock(a, 31, 34, 0.45); }
+  if (kind === 'ore') { add(a, ell(20, 34, 16, 2.5), '#1e222b', 0.3); rock(a, 17, 34, 0.95); rock(a, 30, 34, 0.42); }
   // 都市と騎士の商品（紙・布・硬貨）: 細かな絵でなく、色付きの札・円で見分けられればよい簡略アイコン
   if (kind === 'paper') { add(a, rect(8, 10, 24, 22), '#eee6c8', 1, '#8a7a4a', 1.5); add(a, line(12, 17, 28, 17), 'none', 0.6, '#8a7a4a', 1.5); add(a, line(12, 23, 28, 23), 'none', 0.6, '#8a7a4a', 1.5); }
   if (kind === 'cloth') { add(a, poly([[20, 6], [34, 14], [28, 34], [12, 34], [6, 14]]), '#d66a9a', 1, '#8a3a60', 1.5); }
