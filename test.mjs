@@ -746,6 +746,20 @@ test('都市と騎士: 蛮族の襲来（勝つと守護者点、負けると都
   assert.equal(g2.barbarianAttacked, true);
   assert.equal(q0.cities.length, 0);
   assert.equal(q0.settlements.includes(vv.id), true);
+
+  // 開拓地の駒が5つとも盤上なら、負けた都市はなくなる
+  const g3 = ckGame();
+  const r0 = g3.players[0];
+  const free = g3.board.vertices.filter((v) => !v.building);
+  free.slice(0, 5).forEach((v) => { v.building = { owner: 0, type: 'settlement' }; r0.settlements.push(v.id); });
+  const vc = free[5];
+  vc.building = { owner: 0, type: 'city' }; r0.cities.push(vc.id); r0.walls = 1;
+  g3.barbarianProgress = 6; g3.phase = 'roll'; g3.turn = 0;
+  E.rollDice(g3, () => 0.1);
+  assert.equal(r0.cities.length, 0);
+  assert.equal(r0.settlements.length, 5);
+  assert.equal(vc.building, null);
+  assert.equal(r0.walls, 0);
 });
 
 test('都市と騎士: 都市壁は土2、都市1つに1つ、最大3。7の捨て札の上限を+2する', () => {

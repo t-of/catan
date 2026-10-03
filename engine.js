@@ -2119,6 +2119,12 @@ function resolveBarbarianAttack(game) {
       const vid = p.cities.find((v) => !metropolisVertices.has(v)); // 大都市の置かれた都市は守られる
       if (vid == null) return;
       p.cities = p.cities.filter((v) => v !== vid);
+      p.walls = Math.min(p.walls || 0, p.cities.length); // 都市壁も都市といっしょに失う
+      if (p.settlements.length >= MAX_SETTLEMENTS) { // 開拓地の駒が残っていなければ、都市はなくなる（公式どおり）
+        game.board.vertices[vid].building = null;
+        log(game, `${playerName(game, idx)}の都市が1つなくなった（蛮族に敗れ、開拓地の駒も残っていなかった）`);
+        return;
+      }
       p.settlements.push(vid);
       game.board.vertices[vid].building = { owner: idx, type: 'settlement' };
       log(game, `${playerName(game, idx)}の都市が1つ開拓地に戻った（蛮族に敗れた）`);
