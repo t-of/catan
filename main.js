@@ -117,6 +117,7 @@ function diceRattle() {
 }
 // ルーレット中の1コマごとの軽いクリック（diceRattle の一粒だけの版）。
 function diceClick() {
+  if (!soundOn) return;
   try { noiseBurst(ctx(), { filter: 'bandpass', freq: 1600 + Math.random() * 1000, Q: 3, peak: 0.12, attack: 0.001, decay: 0.025 }); } catch { /* 音が出せなくても遊べる */ }
 }
 const SOUND = {
