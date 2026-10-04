@@ -383,6 +383,10 @@ function modeForPhase() {
   return 'idle';
 }
 
+// ルールを書き換える操作は、必ずここを通す（通信対戦を足すときに、送る場所をここ1つにまとめるため）。
+// 今は1台モードしかないので、engineの同じ名前の関数を呼ぶだけ。保存・描画・音はこれまでどおり呼び出し側で行う。
+function act(name, args) { return E[name](game, ...(args || [])); }
+
 function persistAndRender() { save('game', game); renderAll(); }
 
 function playEvents() {
@@ -1149,8 +1153,8 @@ function renderBuildGrid() {
     btn.appendChild(label);
     if (d.key !== 'improve') btn.appendChild(costRow(d.cost));
     btn.addEventListener('click', () => {
-      if (d.key === 'dev') { E.buyDevCard(game); playEvents(); persistAndRender(); return; }
-      if (d.key === 'wall') { E.buildWall(game); playEvents(); persistAndRender(); return; }
+      if (d.key === 'dev') { act('buyDevCard', []); playEvents(); persistAndRender(); return; }
+      if (d.key === 'wall') { act('buildWall', []); playEvents(); persistAndRender(); return; }
       if (d.key === 'improve') { ui = { mode: 'cityImprove', data: {} }; renderAll(); return; }
       if (active) { ui = { mode: 'idle', data: {} }; renderAll(); return; }
       ui = { mode: BUILD_MODE[d.key], data: {} };
@@ -1291,7 +1295,7 @@ function renderDiscardPanel(d) {
     inc: (b) => { const r = b.dataset.res; if (picked[r] < p.resources[r] && total < d.count) { picked[r]++; renderPanel(); } },
     dec: (b) => { const r = b.dataset.res; if (picked[r] > 0) { picked[r]--; renderPanel(); } },
     confirm: () => {
-      E.discardCards(game, d.player, picked);
+      act('discardCards', [d.player, picked]);
       ui.data.discardPicked = null;
       if (game.phase !== 'discard') ui = { mode: 'moveRobber', data: {} };
       persistAndRender(); // 捨て札が残っていればCPUの分を自動で進め、人の分が残っていれば窓を出し直す
@@ -1315,7 +1319,7 @@ function renderGoldPickPanel(d) {
   bindPanel({
     pick: (b) => { if (picked.length < d.count) { picked.push(b.dataset.res); renderPanel(); } },
     confirm: () => {
-      E.pickGold(game, d.player, picked);
+      act('pickGold', [d.player, picked]);
       ui.data.goldPicked = null;
       if (game.phase !== 'goldPick') ui = { mode: 'idle', data: {} };
       persistAndRender();
@@ -1334,7 +1338,7 @@ function renderScienceBonusPanel(playerIdx) {
   }, 'pick');
   bindPanel({
     pick: (b) => {
-      E.pickScienceBonus(game, playerIdx, b.dataset.res);
+      act('pickScienceBonus', [playerIdx, b.dataset.res]);
       if (game.phase !== 'scienceBonus') ui = { mode: 'idle', data: {} };
       persistAndRender();
     },
@@ -1360,7 +1364,7 @@ function renderCamelVotePanel(playerIdx) {
     sinc: () => { bid.sheep++; renderPanel(); },
     sdec: () => { if (bid.sheep > 0) { bid.sheep--; renderPanel(); } },
     bid: () => {
-      E.submitCamelBid(game, playerIdx, bid);
+      act('submitCamelBid', [playerIdx, bid]);
       ui.data.camelBid = null;
       playEvents(); persistAndRender(); renderPanel();
     },
@@ -1375,7 +1379,7 @@ function renderBarbarianStealPanel(idx) {
   bindPanel({
     pick: (b) => {
       const target = b.dataset.target === '' ? null : Number(b.dataset.target);
-      E.resolveBarbarianSteal(game, target);
+      act('resolveBarbarianSteal', [target]);
       playEvents(); persistAndRender();
     },
   });
@@ -1390,8 +1394,8 @@ function renderRobberTargetPanel(hexId, forDev) {
   bindPanel({
     pick: (b) => {
       const target = b.dataset.target === '' ? null : Number(b.dataset.target);
-      if (forDev != null) E.playKnight(game, forDev, hexId, target);
-      else E.moveRobber(game, hexId, target);
+      if (forDev != null) act('playKnight', [forDev, hexId, target]);
+      else act('moveRobber', [hexId, target]);
       ui = { mode: 'idle', data: {} };
       playEvents();
       persistAndRender();
@@ -1479,18 +1483,18 @@ function renderTradeMenu() {
     pgdec: (b) => { const r = b.dataset.res; if (pGive[r] > 0) { pGive[r]--; renderPanel(); } },
     pwinc: (b) => { const r = b.dataset.res; if (pGet[r] < game.players[other].resources[r]) { pGet[r]++; renderPanel(); } },
     pwdec: (b) => { const r = b.dataset.res; if (pGet[r] > 0) { pGet[r]--; renderPanel(); } },
-    bank: () => { E.bankTrade(game, give, want); ui.data.tradeGive = null; ui.data.tradeWant = null; playEvents(); persistAndRender(); renderPanel(); },
+    bank: () => { act('bankTrade', [give, want]); ui.data.tradeGive = null; ui.data.tradeWant = null; playEvents(); persistAndRender(); renderPanel(); },
     playerTrade: () => {
       if (isCpuSeat(other)) {
         // CPUが相手のときは、成立させる前に受けるか断るかを決める（人の手札は見ず、今回の内容だけで判断）
         if (CPU.acceptTrade(game, other, pGive, pGet, seatLevel(other))) {
-          E.playerTrade(game, other, pGive, pGet);
+          act('playerTrade', [other, pGive, pGet]);
           game.log.push(`${game.players[other].name}が交易を受けました`);
         } else {
           game.log.push(`${game.players[other].name}は交易を断りました`);
         }
       } else {
-        E.playerTrade(game, other, pGive, pGet);
+        act('playerTrade', [other, pGive, pGet]);
       }
       ui.data.pGive = null; ui.data.pGet = null;
       playEvents(); persistAndRender(); renderPanel();
@@ -1500,14 +1504,14 @@ function renderTradeMenu() {
     fishRes: (b) => { ui.data.fishRes = b.dataset.res; renderPanel(); },
     goldRes: (b) => { ui.data.goldRes = b.dataset.res; renderPanel(); },
     gold2Res: (b) => { ui.data.gold2Res = b.dataset.res; renderPanel(); },
-    fishRobber: () => { E.fishRobberAway(game); playEvents(); persistAndRender(); renderPanel(); },
-    fishSteal: () => { E.fishSteal(game, fishOther); playEvents(); persistAndRender(); renderPanel(); },
-    fishResource: () => { E.fishResource(game, fishRes); playEvents(); persistAndRender(); renderPanel(); },
+    fishRobber: () => { act('fishRobberAway', []); playEvents(); persistAndRender(); renderPanel(); },
+    fishSteal: () => { act('fishSteal', [fishOther]); playEvents(); persistAndRender(); renderPanel(); },
+    fishResource: () => { act('fishResource', [fishRes]); playEvents(); persistAndRender(); renderPanel(); },
     fishRoadStart: () => { ui = { mode: 'fishRoadPick', data: {} }; renderAll(); },
-    fishDev: () => { E.fishDevCard(game); playEvents(); persistAndRender(); renderPanel(); },
-    giveBoot: () => { E.giveOldBoot(game, ui.data.bootOther == null ? (idx + 1) % game.playerCount : ui.data.bootOther); playEvents(); persistAndRender(); renderPanel(); },
-    goldTrade: () => { E.tradeGold(game, goldRes); playEvents(); persistAndRender(); renderPanel(); },
-    resForGold: () => { E.tradeResourceForGold(game, gold2Res); playEvents(); persistAndRender(); renderPanel(); },
+    fishDev: () => { act('fishDevCard', []); playEvents(); persistAndRender(); renderPanel(); },
+    giveBoot: () => { act('giveOldBoot', [ui.data.bootOther == null ? (idx + 1) % game.playerCount : ui.data.bootOther]); playEvents(); persistAndRender(); renderPanel(); },
+    goldTrade: () => { act('tradeGold', [goldRes]); playEvents(); persistAndRender(); renderPanel(); },
+    resForGold: () => { act('tradeResourceForGold', [gold2Res]); playEvents(); persistAndRender(); renderPanel(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1582,7 +1586,7 @@ function renderYearOfPlentyPanel() {
   bindPanel({
     pick: (b) => { if (picked.length < 2) { picked.push(b.dataset.res); renderPanel(); } },
     confirm: () => {
-      E.playYearOfPlenty(game, ui.data.cardIdx, picked[0], picked[1]);
+      act('playYearOfPlenty', [ui.data.cardIdx, picked[0], picked[1]]);
       ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender();
     },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
@@ -1594,7 +1598,7 @@ function renderMonopolyPanel() {
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
   fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'pick');
   bindPanel({
-    pick: (b) => { E.playMonopoly(game, ui.data.cardIdx, b.dataset.res); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    pick: (b) => { act('playMonopoly', [ui.data.cardIdx, b.dataset.res]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1618,7 +1622,7 @@ function renderDevRoadFinish() {
     <button class="btn btn--accent" data-act="finish">1本だけで終わる</button>
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
   bindPanel({
-    finish: () => { E.playRoadBuilding(game, ui.data.cardIdx, ui.data.edges); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    finish: () => { act('playRoadBuilding', [ui.data.cardIdx, ui.data.edges]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1649,8 +1653,8 @@ function renderCommodityTradePanel() {
   fillResPick(els.panel.querySelector('[data-row="res"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'res');
   fillResPick(els.panel.querySelector('[data-row="com"]'), E.COMMODITIES, () => false, (c, b) => b.appendChild(resIcon(c)), 'com');
   bindPanel({
-    res: (b) => { if (E.tradeCommodity(game, giving, 'resource', b.dataset.res)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } },
-    com: (b) => { if (E.tradeCommodity(game, giving, 'commodity', b.dataset.res)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } },
+    res: (b) => { if (act('tradeCommodity', [giving, 'resource', b.dataset.res])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } },
+    com: (b) => { if (act('tradeCommodity', [giving, 'commodity', b.dataset.res])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1669,11 +1673,11 @@ function renderKnightMenu() {
     </div>`).join('') || '<p>騎士はいません</p>';
   els.panel.innerHTML = `<h2>騎士を操作</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
   bindPanel({
-    activate: (b) => { E.activateKnight(game, Number(b.dataset.k)); playEvents(); persistAndRender(); },
-    upgrade: (b) => { E.upgradeKnight(game, Number(b.dataset.k)); playEvents(); persistAndRender(); },
+    activate: (b) => { act('activateKnight', [Number(b.dataset.k)]); playEvents(); persistAndRender(); },
+    upgrade: (b) => { act('upgradeKnight', [Number(b.dataset.k)]); playEvents(); persistAndRender(); },
     move: (b) => { ui = { mode: 'moveKnightTo', data: { knightId: Number(b.dataset.k) } }; renderAll(); },
     expel: (b) => { ui = { mode: 'knightExpelTarget', data: { knightId: Number(b.dataset.k) } }; renderAll(); },
-    chase: (b) => { E.chaseRobber(game, Number(b.dataset.k)); playEvents(); persistAndRender(); },
+    chase: (b) => { act('chaseRobber', [Number(b.dataset.k)]); playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1688,7 +1692,7 @@ function renderKnightExpelPanel() {
   bindPanel({
     pick: (b) => {
       const t = targets[Number(b.dataset.i)];
-      E.expelKnight(game, ui.data.knightId, t.ownerIdx, t.knightId);
+      act('expelKnight', [ui.data.knightId, t.ownerIdx, t.knightId]);
       ui = { mode: 'knightMenu', data: {} };
       playEvents(); persistAndRender();
     },
@@ -1708,7 +1712,7 @@ function renderCityImprovePanel() {
   }).join('');
   els.panel.innerHTML = `<h2>都市の発展</h2>${rows}<button class="ghost-btn" data-act="cancel">戻る</button>`;
   bindPanel({
-    up: (b) => { E.improveCity(game, b.dataset.t); playEvents(); persistAndRender(); },
+    up: (b) => { act('improveCity', [b.dataset.t]); playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1737,7 +1741,7 @@ function renderProgressMenu() {
     use: (b) => {
       const i = Number(b.dataset.i);
       const card = p.progressCards[i];
-      if (PROGRESS_NO_PARAM.has(card.id)) { E.playProgressCard(game, i, {}); playEvents(); persistAndRender(); return; }
+      if (PROGRESS_NO_PARAM.has(card.id)) { act('playProgressCard', [i, {}]); playEvents(); persistAndRender(); return; }
       const mode = PROGRESS_PARAM_MODE[card.id];
       if (!mode) return;
       ui = { mode, data: { cardIdx: i, picked: [], edges: [], trades: [], pendingGive: null } };
@@ -1750,7 +1754,7 @@ function renderProgressRes1Panel() {
   els.panel.innerHTML = '<h2>資源を1つ選ぶ</h2><div class="res-pick" data-row="pick"></div><button class="ghost-btn" data-act="cancel">やめる</button>';
   fillResPick(els.panel.querySelector('[data-row="pick"]'), E.RESOURCES, () => false, (r, b) => b.appendChild(resIcon(r)), 'pick');
   bindPanel({
-    pick: (b) => { E.playProgressCard(game, ui.data.cardIdx, { res: b.dataset.res }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    pick: (b) => { act('playProgressCard', [ui.data.cardIdx, { res: b.dataset.res }]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1765,7 +1769,7 @@ function renderProgressRes2Panel() {
   picked.forEach((r) => p.appendChild(resIcon(r)));
   bindPanel({
     pick: (b) => { if (picked.length < 2) { picked.push(b.dataset.res); renderPanel(); } },
-    confirm: () => { E.playProgressCard(game, ui.data.cardIdx, { res: picked }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    confirm: () => { act('playProgressCard', [ui.data.cardIdx, { res: picked }]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1773,7 +1777,7 @@ function renderProgressCom1Panel() {
   els.panel.innerHTML = '<h2>商品を1つ選ぶ</h2><div class="res-pick" data-row="pick"></div><button class="ghost-btn" data-act="cancel">やめる</button>';
   fillResPick(els.panel.querySelector('[data-row="pick"]'), E.COMMODITIES, () => false, (c, b) => b.appendChild(resIcon(c)), 'pick');
   bindPanel({
-    pick: (b) => { E.playProgressCard(game, ui.data.cardIdx, { com: b.dataset.res }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    pick: (b) => { act('playProgressCard', [ui.data.cardIdx, { com: b.dataset.res }]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1794,7 +1798,7 @@ function renderProgressTradePanel() {
     want: (b) => {
       trades.push([ui.data.pendingGive, b.dataset.res]);
       ui.data.pendingGive = null;
-      if (trades.length >= times) { E.playProgressCard(game, ui.data.cardIdx, { trades }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } else renderPanel();
+      if (trades.length >= times) { act('playProgressCard', [ui.data.cardIdx, { trades }]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } else renderPanel();
     },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
@@ -1807,7 +1811,7 @@ function renderProgressKnightOwnPanel() {
   const rows = list.map((k) => `<button class="card-btn" data-act="pick" data-k="${k.id}">${E.KNIGHT_LEVEL_LABEL[k.level]} → ${E.KNIGHT_LEVEL_LABEL[k.level + 1]}</button>`).join('') || '<p>昇格できる騎士がいません</p>';
   els.panel.innerHTML = `<h2>騎士を1体、只で昇格</h2>${rows}<button class="ghost-btn" data-act="cancel">やめる</button>`;
   bindPanel({
-    pick: (b) => { E.playProgressCard(game, ui.data.cardIdx, { knightId: Number(b.dataset.k) }); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
+    pick: (b) => { act('playProgressCard', [ui.data.cardIdx, { knightId: Number(b.dataset.k) }]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
   });
 }
@@ -1831,7 +1835,7 @@ function renderProgressKnightTargetPanel() {
   bindPanel({
     pick: (b) => {
       const t = list[Number(b.dataset.i)];
-      E.playProgressCard(game, ui.data.cardIdx, { ownerIdx: t.ownerIdx, knightId: t.knightId });
+      act('playProgressCard', [ui.data.cardIdx, { ownerIdx: t.ownerIdx, knightId: t.knightId }]);
       ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender();
     },
     cancel: () => { ui = { mode: 'idle', data: {} }; renderAll(); },
@@ -1872,7 +1876,7 @@ els.diceBtn.addEventListener('click', () => {
   if (rolling || game.phase !== 'roll' || !humansTurn()) return;
   const finish = () => {
     rolling = false;
-    E.rollDice(game);
+    act('rollDice', []);
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
     persistAndRender();
@@ -1902,7 +1906,7 @@ els.devBtn.addEventListener('click', () => {
 });
 els.endTurnBtn.addEventListener('click', () => {
   if (!humansTurn()) return;
-  if (game.phase === 'specialBuilding') E.passSpecialBuild(game); else E.endTurn(game);
+  if (game.phase === 'specialBuilding') act('passSpecialBuild', []); else act('endTurn', []);
   ui = { mode: 'idle', data: {} };
   persistAndRender();
 });
@@ -1921,50 +1925,50 @@ els.board.addEventListener('click', (e) => {
 });
 
 function onVertexTap(vid) {
-  if (ui.mode === 'setupSettlement') { E.setupPlaceSettlement(game, vid); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
-  if (ui.mode === 'buildSettlement') { if (E.buildSettlement(game, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'buildCity') { if (E.buildCity(game, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'buildKnight') { if (E.buildKnight(game, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'setupSettlement') { act('setupPlaceSettlement', [vid]); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
+  if (ui.mode === 'buildSettlement') { if (act('buildSettlement', [vid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildCity') { if (act('buildCity', [vid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildKnight') { if (act('buildKnight', [vid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'moveKnightTo') {
-    if (E.moveKnight(game, ui.data.knightId, vid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    if (act('moveKnight', [ui.data.knightId, vid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     return;
   }
   if (ui.mode === 'progressVertex') {
-    if (E.playProgressCard(game, ui.data.cardIdx, { vertex: vid })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    if (act('playProgressCard', [ui.data.cardIdx, { vertex: vid }])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     return;
   }
 }
 function onEdgeTap(eid) {
-  if (game.phase === 'camelPlace') { if (E.placeCamel(game, eid)) { playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'setupRoad') { E.setupPlaceRoad(game, eid); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
-  if (ui.mode === 'buildRoad') { if (E.buildRoad(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'buildShip') { if (E.buildShip(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (game.phase === 'camelPlace') { if (act('placeCamel', [eid])) { playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'setupRoad') { act('setupPlaceRoad', [eid]); ui = { mode: modeForPhase(), data: {} }; playEvents(); persistAndRender(); return; }
+  if (ui.mode === 'buildRoad') { if (act('buildRoad', [eid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildShip') { if (act('buildShip', [eid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'moveShip1') {
     const idx = E.currentPlayer(game);
     if (E.movableShipEdges(game, idx).includes(eid)) { ui = { mode: 'moveShip2', data: { from: eid } }; renderAll(); }
     return;
   }
-  if (ui.mode === 'moveShip2') { if (E.moveShip(game, ui.data.from, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'buildWarKnight') { if (E.buildWarKnight(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
-  if (ui.mode === 'fishRoadPick') { if (E.fishRoad(game, eid)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'moveShip2') { if (act('moveShip', [ui.data.from, eid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'buildWarKnight') { if (act('buildWarKnight', [eid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'fishRoadPick') { if (act('fishRoad', [eid])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'moveWarKnight1') {
     const idx = E.currentPlayer(game);
     const k = game.players[idx].warKnights.find((x) => x.edgeId === eid && E.movableWarKnightEdges(game, idx, x.id, false).length);
     if (k) { ui = { mode: 'moveWarKnight2', data: { knightId: k.id } }; renderAll(); }
     return;
   }
-  if (ui.mode === 'moveWarKnight2') { if (E.moveWarKnight(game, ui.data.knightId, eid, false)) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
+  if (ui.mode === 'moveWarKnight2') { if (act('moveWarKnight', [ui.data.knightId, eid, false])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); } return; }
   if (ui.mode === 'devRoad1' || ui.mode === 'devRoad2') { onDevRoadEdgeTap(eid); return; }
   if (ui.mode === 'progressEdge1') {
     if (!E.canPlaceRoad(game, eid, E.currentPlayer(game))) return;
-    if (E.playProgressCard(game, ui.data.cardIdx, { edge: eid })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    if (act('playProgressCard', [ui.data.cardIdx, { edge: eid }])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     return;
   }
   if (ui.mode === 'progressEdge2') {
     if (!E.canPlaceRoad(game, eid, E.currentPlayer(game)) || ui.data.edges.includes(eid)) return;
     ui.data.edges.push(eid);
     if (ui.data.edges.length >= 2) {
-      if (E.playProgressCard(game, ui.data.cardIdx, { edges: ui.data.edges })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+      if (act('playProgressCard', [ui.data.cardIdx, { edges: ui.data.edges }])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     } else renderAll();
   }
 }
@@ -1986,7 +1990,7 @@ function resolveDevRoadPick(eid, kind) {
     renderAll();
   } else {
     const picked = [...ui.data.edges, item];
-    E.playRoadBuilding(game, ui.data.cardIdx, picked);
+    act('playRoadBuilding', [ui.data.cardIdx, picked]);
     ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender();
   }
 }
@@ -1997,7 +2001,7 @@ function onHexTap(hid) {
     const idx = E.currentPlayer(game);
     const targets = E.banditTargets(game, hid, idx);
     if (targets.length > 1) { ui.data.pendingHex = hid; ui.data.forDev = null; renderAll(); }
-    else { E.moveRobber(game, hid, targets[0] ?? null); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    else { act('moveRobber', [hid, targets[0] ?? null]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     return;
   }
   if (ui.mode === 'devKnightHex') {
@@ -2005,7 +2009,7 @@ function onHexTap(hid) {
     const idx = E.currentPlayer(game);
     const targets = E.banditTargets(game, hid, idx);
     if (targets.length > 1) { ui.data.pendingHex = hid; ui.data.forDev = ui.data.cardIdx; renderAll(); }
-    else { E.playKnight(game, ui.data.cardIdx, hid, targets[0] ?? null); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    else { act('playKnight', [ui.data.cardIdx, hid, targets[0] ?? null]); ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
     return;
   }
   if (ui.mode === 'progressHexA') {
@@ -2015,7 +2019,7 @@ function onHexTap(hid) {
   }
   if (ui.mode === 'progressHexB') {
     if (game.board.hexes[hid].number == null || hid === ui.data.hexA) return;
-    if (E.playProgressCard(game, ui.data.cardIdx, { hexA: ui.data.hexA, hexB: hid })) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
+    if (act('playProgressCard', [ui.data.cardIdx, { hexA: ui.data.hexA, hexB: hid }])) { ui = { mode: 'idle', data: {} }; playEvents(); persistAndRender(); }
   }
 }
 
