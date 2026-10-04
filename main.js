@@ -1551,7 +1551,8 @@ function renderCk() {
 function renderSoccer() {
   if (!game.soccer) { els.soccerPanel.hidden = true; return; }
   els.soccerPanel.hidden = false;
-  const idx = E.currentPlayer(game);
+  // 持ち駒は自分の分だけ出す（通信対戦では相手の持ち駒を自分の画面に出さない。renderCkと同じ考え方）
+  const idx = handSeatIndex();
   const p = game.players[idx];
   els.soccerPanel.innerHTML = '';
   const head = document.createElement('div');

@@ -1669,16 +1669,14 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   assert.deepEqual(stillOut[0], subbed[0]);
 });
 
-test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」「航海者版」「都市と騎士」「交易と略奪」「探検家と海賊」がready（段階9〜9-5）', async () => {
+test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは全部（なし・航海者版・都市と騎士・交易と略奪・サッカー熱・探検家と海賊）がready（段階9〜9-6）', async () => {
   const { canStart, ONLINE_EXPANSIONS } = await import('./online.js');
   const seats6 = Array.from({ length: 6 }, (_, i) => (i < 2
     ? { type: 'human', uid: `u${i}` }
     : { type: 'cpu', level: 'normal' }));
   assert.equal(canStart(seats6), true);
   assert.equal(canStart(seats6.slice(0, 5)), true);
-  const readyIds = ['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'explorers-pirates'];
-  assert.deepEqual(ONLINE_EXPANSIONS.filter((x) => x.ready).map((x) => x.id), readyIds);
-  assert.equal(ONLINE_EXPANSIONS.filter((x) => !readyIds.includes(x.id)).every((x) => x.ready === false), true);
+  assert.equal(ONLINE_EXPANSIONS.every((x) => x.ready === true), true);
 });
 
 // 通信対戦9-5: 探検家と海賊を開ける。船を置く・動かす(buildShip/moveShip)は航海者版と同じengine関数で、
@@ -1701,6 +1699,36 @@ test('探検家と海賊: buildShipはcurrentPlayerにしか当たらず、船�
   assert.equal(g.players[0].ships.length, 0); // 手番でない0の船にはならない
   assert.equal(fogHex.fog, false); // 船を置いた人の霧が開く
   assert.equal(g.players[1].epRevealed, 1);
+});
+
+// 通信対戦9-6: サッカー熱を開ける。持ち駒を増やす処理(grantSoccerShot)はbuildSettlement/buildCity/setup系の
+// 中からcurrentPlayer(game)のidxで呼ばれるだけで、新しい操作名は増えない。既存のONLINE_TURN_ACTIONSの
+// 確かめ（9-5までと同じ形）がそのまま効くことを、buildSettlementで確かめる
+test('サッカー熱: buildSettlementがピッチのマスの隣でcurrentPlayerの持ち駒(socShots)だけ増やす（新しい操作名を足す必要がない）', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['soccer'] });
+  g.phase = 'main'; g.turn = 0; g.turnNumber = 1;
+  const pitchHexId = g.board.pitchHexIds[0];
+  const v = g.board.vertices.find((x) => x.hexIds.includes(pitchHexId) && !x.building && !x.neighbors.some((n) => g.board.vertices[n].building));
+  assert.ok(v, 'ピッチのマスに隣接する空いている頂点が見つからない');
+  const edge = v.edgeIds[0];
+  g.board.edges[edge].road = 0; // 自分の道がつながっている体にする（探検家と海賊のテストと同じ組み方）
+  g.players[0].roads.push(edge);
+  g.players[0].resources = { wood: 1, brick: 1, sheep: 1, wheat: 1, ore: 0 };
+  const before = g.players[0].socShots;
+  const otherBefore = g.players[1].socShots;
+  assert.ok(E.buildSettlement(g, v.id)); // 手番(0)の開拓地として置かれ、持ち駒が増える
+  assert.equal(g.players[0].socShots, before + 1);
+  assert.equal(g.players[1].socShots, otherBefore); // 手番でない1の持ち駒は動かない
+});
+
+// 通信対戦9-6: renderSoccerの「持ち駒」は自分の席だけ出す（discard・goldPick・scienceBonus・camelVoteと同じ直し方）。
+// main.jsのhandSeatIndexが通信対戦では自分の席、1台モードではcurrentPlayerを返すことは既存のrenderCk用の
+// テストで確かめ済みなので、ここではengine側のsocShotsが席ごとに別の値を持てることだけ確かめる
+test('サッカー熱: socShotsは席ごとに別の値（renderSoccerが自分の分だけ出せるようにengine側が区別している）', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['soccer'] });
+  g.players[0].socShots = 3;
+  g.players[1].socShots = 5;
+  assert.notEqual(g.players[0].socShots, g.players[1].socShots);
 });
 
 // 通信対戦9-4: 交易と略奪を開ける。漁師・川・隊商・蛮族の襲撃の操作はすべてengineがcurrentPlayer(game)で

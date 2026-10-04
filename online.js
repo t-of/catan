@@ -30,7 +30,7 @@ const ONLINE_EXPANSIONS = [
   { id: 'seafarers', name: '航海者版', ready: true },
   { id: 'cities-knights', name: '都市と騎士', ready: true },
   { id: 'traders-barbarians', name: '交易と略奪', ready: true },
-  { id: 'soccer', name: 'サッカー熱', ready: false },
+  { id: 'soccer', name: 'サッカー熱', ready: true },
   { id: 'explorers-pirates', name: '探検家と海賊', ready: true },
 ];
 
