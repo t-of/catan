@@ -27,7 +27,7 @@ function parseSettings(json) {
 // 通信対戦で選べる拡張（段階9）。1つずつ ready: true にして開ける。表に足すだけで済むようにしてある
 const ONLINE_EXPANSIONS = [
   { id: 'none', name: 'なし', ready: true },
-  { id: 'seafarers', name: '航海者版', ready: false },
+  { id: 'seafarers', name: '航海者版', ready: true },
   { id: 'cities-knights', name: '都市と騎士', ready: false },
   { id: 'traders-barbarians', name: '交易と略奪', ready: false },
   { id: 'soccer', name: 'サッカー熱', ready: false },

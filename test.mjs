@@ -618,6 +618,50 @@ test('航海者版×5〜6人: 特別建設フェイズで船も建てられる',
   assert.equal(g.players[2].ships.length, 1);
 });
 
+// 通信対戦9-2: 航海者版を開ける。金の川（gold）は手番と関係なく誰からでも片付けられる必要がある
+// （ホストは「その席が pendingGoldPicks にいるか」だけで確かめ、席番号はホストが入れる。main.js ONLINE_SELF_ACTIONS）。
+// 届く順が手番順とは限らないので、エンジン側が順不同で受けられることを確かめる。
+test('航海者版: 金の川(gold)の受け取りは、複数人が同時に待っていても届いた順(手番と無関係)に片付く', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+  g.phase = 'main';
+  g.pendingGoldPicks = [{ player: 2, count: 1 }, { player: 0, count: 2 }, { player: 3, count: 1 }];
+  const before = { 0: g.bank.resources.wood, 2: g.bank.resources.ore, 3: g.bank.resources.sheep };
+  // 手番(currentPlayer)とは無関係の順で届く想定。存在しない席や、すでに片付いた席はfalseで断る
+  assert.equal(E.pickGold(g, 1, ['wood']), false); // 待っていない席
+  assert.ok(E.pickGold(g, 3, ['sheep']));
+  assert.ok(E.pickGold(g, 0, ['wood', 'wood']));
+  assert.equal(E.pickGold(g, 0, ['wood']), false); // もう片付いた席からもう一度来ても断る
+  assert.ok(E.pickGold(g, 2, ['ore']));
+  assert.deepEqual(g.pendingGoldPicks, []);
+  assert.equal(g.phase, 'main');
+  assert.equal(g.players[0].resources.wood, 2);
+  assert.equal(g.players[2].resources.ore, 1);
+  assert.equal(g.players[3].resources.sheep, 1);
+  assert.equal(g.bank.resources.wood, before[0] - 2);
+  assert.equal(g.bank.resources.ore, before[2] - 1);
+  assert.equal(g.bank.resources.sheep, before[3] - 1);
+});
+
+// 通信対戦9-2: 船を置く・動かすは「手番の操作」(main.js ONLINE_TURN_ACTIONS)。
+// engineはcurrentPlayer(game)だけを見て動かすので、手番でない人が送っても手番の人として当たってしまう。
+// ホストは送り主の席とE.actingPlayer(game)が一致するかを先に確かめてから呼ぶ必要がある、という前提をここで確かめる
+// （main.js側の確かめはDOM依存で直接testできないため、engineが「誰の操作か」を区別しないことを裏づける）。
+test('航海者版: buildShip/moveShipはcurrentPlayerにしか当たらない（手番の確かめはホスト側の責任）', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 1;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
+  const seaEdge = g.board.edges.find((e) => e.hexIds.some((h) => g.board.hexes[h].terrain === 'water') && e.hexIds.some((h) => g.board.hexes[h].terrain !== 'water')
+    && !g.board.hexes[g.board.pirateHex].edgeIds.includes(e.id));
+  const v = g.board.vertices[seaEdge.v1];
+  v.building = { owner: 1, type: 'settlement' };
+  g.players[1].settlements.push(v.id);
+  assert.equal(E.currentPlayer(g), 1);
+  const shipEdge = E.availableShipEdges(g, 1)[0];
+  assert.ok(E.buildShip(g, shipEdge)); // 手番(1)として置かれる。船を置けたのは手番の人だけという前提
+  assert.equal(g.board.edges[shipEdge].ship, 1);
+  assert.equal(g.players[0].ships.length, 0); // 手番でない0の船にはならない
+});
+
 test('航海者版×5〜6人: CPUだけで5人・6人、数局きちんと決着する', () => {
   for (const levels of [['weak', 'normal', 'strong', 'weak', 'normal'], ['weak', 'normal', 'strong', 'weak', 'normal', 'strong']]) {
     for (let i = 0; i < 3; i++) {
@@ -1623,15 +1667,15 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   assert.deepEqual(stillOut[0], subbed[0]);
 });
 
-test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」だけready（段階9）', async () => {
+test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」と「航海者版」がready（段階9〜9-2）', async () => {
   const { canStart, ONLINE_EXPANSIONS } = await import('./online.js');
   const seats6 = Array.from({ length: 6 }, (_, i) => (i < 2
     ? { type: 'human', uid: `u${i}` }
     : { type: 'cpu', level: 'normal' }));
   assert.equal(canStart(seats6), true);
   assert.equal(canStart(seats6.slice(0, 5)), true);
-  assert.equal(ONLINE_EXPANSIONS.find((x) => x.id === 'none').ready, true);
-  assert.equal(ONLINE_EXPANSIONS.filter((x) => x.id !== 'none').every((x) => x.ready === false), true);
+  assert.deepEqual(ONLINE_EXPANSIONS.filter((x) => x.ready).map((x) => x.id), ['none', 'seafarers']);
+  assert.equal(ONLINE_EXPANSIONS.filter((x) => !['none', 'seafarers'].includes(x.id)).every((x) => x.ready === false), true);
 });
 
 // ---- 通信対戦: 待合のQR（段階8。デコードしての一致確認はスクラッチで npm の jsQR を使って別途確認済み）----

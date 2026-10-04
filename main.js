@@ -587,6 +587,7 @@ const ONLINE_TURN_ACTIONS = new Set([
   'bankTrade', 'moveRobber', 'endTurn', 'passSpecialBuild',
   'setupPlaceSettlement', 'setupPlaceRoad',
   'playYearOfPlenty', 'playMonopoly', 'playRoadBuilding',
+  'buildShip', 'moveShip', // 航海者版
 ]);
 // 手番と関係なく、自分の分を片付ける操作（席番号は信用せず、ホストが送り主から引いた席で上書きする）
 const ONLINE_SELF_ACTIONS = new Set(['discardCards', 'pickGold', 'pickScienceBonus', 'submitCamelBid']);
@@ -1752,7 +1753,9 @@ function renderPanel() {
     return;
   }
   if (ui.mode === 'goldPick' && game.phase === 'goldPick') {
-    const d = game.pendingGoldPicks.find((x) => !isCpuSeat(x.player));
+    const d = onlineRoom
+      ? game.pendingGoldPicks.find((x) => x.player === mySeatIndex())
+      : game.pendingGoldPicks.find((x) => !isCpuSeat(x.player));
     if (d) { openPanel(); renderGoldPickPanel(d); }
     else closePanel();
     return;
