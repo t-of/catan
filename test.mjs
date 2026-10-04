@@ -1815,3 +1815,52 @@ test('qr.js: 文字列ごとに違うSVGのQRを作る（roomQrSvgが使う部�
   assert.notEqual(svgA, svgB); // 部屋コードが変われば中身(モジュール配置)も変わる
   assert.equal(make(linkA), svgA); // 同じ文字列なら同じ見た目
 });
+
+// ---- 通信対戦: 隠し情報を分ける（段階10） ----
+test('viewFor: 自分の席はそのまま、他人の資源・発展カードは枚数だけになる', () => {
+  const g = E.createGame(3, Math.random);
+  g.players[0].resources = { wood: 2, brick: 0, sheep: 1, wheat: 0, ore: 3 }; // 合計6枚
+  g.players[0].devCards = [{ type: 'vp', boughtTurn: 1, played: false }, { type: 'knight', boughtTurn: 2, played: true }];
+  const view0 = E.viewFor(g, 0);
+  const view1 = E.viewFor(g, 1);
+  const pub = E.viewFor(g, null);
+  // 自分(0)の席から見れば中身がそのまま見える
+  assert.deepEqual(view0.players[0].resources, g.players[0].resources);
+  assert.equal(view0.players[0].devCards[0].type, 'vp');
+  // 他人(1)やpub(誰でもない)からは、枚数だけになり内訳は消える
+  [view1, pub].forEach((v) => {
+    assert.deepEqual(v.players[0].resources, { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 });
+    assert.equal(v.players[0].handCount, 6); // 枚数は公開情報として残る
+    assert.equal(v.players[0].devCards[0].type, null); // まだ使っていないカードの中身は隠す
+    assert.equal(v.players[0].devCards[1].type, 'knight'); // 使った後は公開済みなので隠さない
+  });
+  // 元のgameは書き換えない
+  assert.equal(g.players[0].resources.ore, 3);
+});
+
+test('viewFor: 発展カードの山・進歩カードの山・魚トークンの山は、本人を含め誰からも順がわからない(枚数だけ残す)', () => {
+  const g = ckGame(3);
+  const deckLen = g.progressDecks.trade.length;
+  const v = E.viewFor(g, 0);
+  assert.equal(v.bank.devDeck.length, g.bank.devDeck.length);
+  assert.ok(v.bank.devDeck.every((c) => c === null));
+  assert.equal(v.progressDecks.trade.length, deckLen);
+  assert.ok(v.progressDecks.trade.every((c) => c === null));
+  g.players[0].progressCards = [{ color: 'trade', id: 'p1' }];
+  const v2 = E.viewFor(g, 1);
+  assert.deepEqual(v2.players[0].progressCards, [{ id: null, color: null }]);
+  assert.equal(E.viewFor(g, 0).players[0].progressCards[0].id, 'p1'); // 自分のぶんは残る
+});
+
+test('viewFor: 都市と騎士の商品は枚数だけ、lastStealの中身は奪った人・奪われた人にだけ見える', () => {
+  const g = ckGame(3);
+  g.players[2].commodities = { paper: 1, cloth: 2, coin: 0 };
+  g.lastSteal = { from: 1, to: 2, res: 'wood' };
+  const viewOther = E.viewFor(g, 0);
+  assert.deepEqual(viewOther.players[2].commodities, { paper: 0, cloth: 0, coin: 0 });
+  assert.equal(viewOther.players[2].commodityCount, 3);
+  assert.equal(viewOther.lastSteal, null);
+  assert.deepEqual(E.viewFor(g, 1).lastSteal, { from: 1, to: 2, res: 'wood' }); // 奪われた人
+  assert.deepEqual(E.viewFor(g, 2).lastSteal, { from: 1, to: 2, res: 'wood' }); // 奪った人
+  assert.equal(E.viewFor(g, null).lastSteal, null); // pub(誰でもない)からは見えない
+});

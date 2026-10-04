@@ -144,6 +144,9 @@ function resSummary(obj) {
   const s = Object.entries(obj).filter(([, n]) => n > 0).map(([r, n]) => `${RES_LABEL[r]}${n}`).join('・');
   return s || 'なし';
 }
+// 手札の総枚数（実物のカードの枚数なので公開情報。通信対戦でE.viewForが他人の内訳を隠した後は
+// p.handCount に入っているので、そちらを使う。自分の席・1台モードでは内訳からそのまま数える）
+function handTotal(p) { return p.handCount ?? E.RESOURCES.reduce((a, r) => a + p.resources[r], 0); }
 const RES_COLOR = { wood: '#3f8a4a', brick: '#c0643a', sheep: '#8cc063', wheat: '#e0b440', ore: '#8a92a3' };
 const PORT_TERRAIN = { wood: 'forest', brick: 'hills', sheep: 'pasture', wheat: 'field', ore: 'mountains' };
 
@@ -243,6 +246,18 @@ function mySeatIndex() {
   if (!onlineRoom) return null;
   const i = onlineSeatUids.indexOf(onlineRoom.uid);
   return i === -1 ? null : i;
+}
+
+// 通信対戦（段階10）: ホストがgameを配るときは、隠し情報を抜いたものに分ける（E.viewForは仕様2-3）。
+// pub=誰の味方でもない公開用、priv=座っている人それぞれの自分の席から見た状態、hostState=ホストが引き継ぐ用の全部入り
+function publishGame() {
+  const priv = {};
+  onlineSeatUids.forEach((uid, seat) => { if (uid) priv[uid] = JSON.stringify(E.viewFor(game, seat)); });
+  onlineRoom.publish({
+    pub: JSON.stringify(E.viewFor(game, null)),
+    priv,
+    host: JSON.stringify(game),
+  });
 }
 
 // ---- 人数選び ----
@@ -568,8 +583,9 @@ function wireOnlineRoom() {
     renderHostGoneBar();
     if (!els.gamePanel.hidden) renderPlayers();
   });
-  onlineRoom.onState((json) => {
-    // ホストは自分の手元のgameが正本なので、自分が配った状態のこだまは読み直さない（二重に音を鳴らさないため）
+  onlineRoom.onPriv((json) => {
+    // ホストは自分の手元のgameが正本なので、自分が配った状態のこだまは読み直さない（二重に音を鳴らさないため）。
+    // 届くのは自分の席から見た状態（E.viewFor。自分の手札はそのまま、他人は枚数だけ）
     if (onlineRoom.isHost) return;
     try { game = JSON.parse(json); } catch { return; }
     ui = { mode: modeForPhase(), data: {} };
@@ -824,7 +840,7 @@ els.lobbyStartBtn.addEventListener('click', () => {
   game = E.createGame(count, Math.random, { expansions, scenario, names });
   ui = { mode: modeForPhase(), data: {} };
   onlineRoom.setMeta({ status: 'playing' });
-  onlineRoom.publish(JSON.stringify(game));
+  publishGame();
   showGame();
   renderAll();
 });
@@ -842,6 +858,11 @@ els.hostGoneBtn.addEventListener('click', async () => {
   if (!onlineRoom || onlineRoom.isHost) return;
   try { await onlineRoom.takeOver(); } catch { return; } // rules がだめなら何もせず終わる（もう誰かが引き継いだ等）
   els.hostGoneBar.hidden = true;
+  // それまでの自分の画面は自分の席から見た状態（他人の手札は枚数だけ）だったので、続きを動かす前に
+  // 全部入り（hostState。前のホストが最後に書いたもの）に入れ替える
+  if (game) {
+    try { const full = await onlineRoom.fetchHostState(); if (full) game = JSON.parse(full); } catch { /* 読めなければ今の画面のまま続ける */ }
+  }
   onlineRoom.onAction(({ uid, name, args }) => hostApplyAction(uid, name, args));
   renderLobby();
   if (game) { ui = { mode: modeForPhase(), data: {} }; renderAll(); } // CPUと操作の箱を回し始める
@@ -889,11 +910,11 @@ function act(name, args) {
 
 // 通信対戦では catan.game に保存しない（1台モードの「つづきから」を消さないため）。
 // ホストは操作のたびに部屋へ配る。events/gains はゲスト側で鳴らすため、配り終えるまで空にしない
-// （playEvents がホストでは splice せず残す。ここで配り終えてから空にする）。ゲストは onState 側で処理する。
+// （playEvents がホストでは splice せず残す。ここで配り終えてから空にする）。ゲストは onPriv 側で処理する。
 function persistAndRender() {
   if (onlineRoom) {
     if (onlineRoom.isHost) {
-      onlineRoom.publish(JSON.stringify(game));
+      publishGame();
       game.events.length = 0;
       game.gains = [];
     }
@@ -1396,7 +1417,7 @@ function renderPlayers() {
     const offlineUid = onlineRoom && seats[i].type === 'human' ? onlineSeatUids[i] : null;
     const statusTag = offlineUid && onlineMembers[offlineUid] && onlineMembers[offlineUid].online === false ? '・切断中' : '';
     body.innerHTML = `<div class="player-card__name"><span class="player-card__nametext">${p.name}</span>${i === idx ? '<span class="player-card__cur">手番</span>' : ''}</div>`
-      + `<div class="player-card__sub">${cpuTag}${statusTag}・手札 ${E.RESOURCES.reduce((a, r) => a + p.resources[r], 0)}・騎士 ${p.knightsPlayed}</div>`
+      + `<div class="player-card__sub">${cpuTag}${statusTag}・手札 ${handTotal(p)}・騎士 ${p.knightsPlayed}</div>`
       + `<div class="player-card__extra">${bonus.join(' ')}</div>`;
     if (onlineRoom && onlineRoom.isHost && offlineUid && isLongOffline(offlineUid)) {
       const subBtn = document.createElement('button');
@@ -1963,7 +1984,7 @@ function renderCamelVotePanel(playerIdx) {
 function renderBarbarianStealPanel(idx) {
   const targets = E.barbarianStealTargets(game, idx);
   els.panel.innerHTML = `<h2>誰から奪う？</h2>`
-    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">${game.players[t].name}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
+    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">${game.players[t].name}（手札${handTotal(game.players[t])}枚）</button>`).join('')
       : `<button class="card-btn" data-act="pick" data-target="">誰も奪えない</button>`);
   bindPanel({
     pick: (b) => {
@@ -1978,7 +1999,7 @@ function renderRobberTargetPanel(hexId, forDev) {
   const idx = E.currentPlayer(game);
   const targets = E.banditTargets(game, hexId, idx);
   els.panel.innerHTML = `<h2>誰から奪う？</h2>`
-    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">${game.players[t].name}（手札${E.RESOURCES.reduce((a, r) => a + game.players[t].resources[r], 0)}枚）</button>`).join('')
+    + (targets.length ? targets.map((t) => `<button class="card-btn" data-act="pick" data-target="${t}">${game.players[t].name}（手札${handTotal(game.players[t])}枚）</button>`).join('')
       : `<button class="card-btn" data-act="pick" data-target="">誰も奪えない</button>`);
   bindPanel({
     pick: (b) => {
@@ -2067,7 +2088,8 @@ function renderTradeMenu() {
   if (!myOffer) {
     fillOtherPick(els.panel.querySelector('[data-row="other"]'), other);
     fillStepperRow(els.panel.querySelector('[data-row="pgive"]'), pGive, (r) => p.resources[r], 'pg');
-    fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => game.players[other].resources[r], 'pw');
+    // 通信対戦: 相手の手札の内訳は見えないので、上限は実数ではなく0〜9にする（成り立つかはengineが確かめる。仕様2-3）
+    fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => (onlineRoom ? 9 : game.players[other].resources[r]), 'pw');
   }
   if (game.scenario === 'fishermen') {
     fillOtherPick(els.panel.querySelector('[data-row="fishOther"]'), fishOther, 'fishOther');
@@ -2087,7 +2109,7 @@ function renderTradeMenu() {
     other: (b) => { ui.data.tradeOther = Number(b.dataset.p); renderPanel(); },
     pginc: (b) => { const r = b.dataset.res; if (pGive[r] < p.resources[r]) { pGive[r]++; renderPanel(); } },
     pgdec: (b) => { const r = b.dataset.res; if (pGive[r] > 0) { pGive[r]--; renderPanel(); } },
-    pwinc: (b) => { const r = b.dataset.res; if (pGet[r] < game.players[other].resources[r]) { pGet[r]++; renderPanel(); } },
+    pwinc: (b) => { const r = b.dataset.res; if (pGet[r] < (onlineRoom ? 9 : game.players[other].resources[r])) { pGet[r]++; renderPanel(); } },
     pwdec: (b) => { const r = b.dataset.res; if (pGet[r] > 0) { pGet[r]--; renderPanel(); } },
     bank: () => { act('bankTrade', [give, want]); ui.data.tradeGive = null; ui.data.tradeWant = null; playEvents(); persistAndRender(); renderPanel(); },
     playerTrade: () => {

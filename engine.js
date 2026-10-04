@@ -2446,3 +2446,34 @@ export function passSpecialBuild(game) {
   }
   return true;
 }
+
+// ---- 通信対戦（段階10）: 隠し情報を分けた「見た目」を作る ----
+// seat 本人（と手番と関係なく見てよいもの）だけ中身を残し、ほかは枚数だけにする。
+// seat === null は「誰の味方でもない公開用」（全員ぶん隠す）。
+// JSON を1回通すだけの浅くないコピーにして、元の game を書き換えない。
+export function viewFor(game, seat) {
+  const g = JSON.parse(JSON.stringify(game));
+  // 発展カード・進歩カードの山の順は、ホスト以外の誰にも見せない（本人ぶんも含めて常に隠す）
+  if (g.bank && Array.isArray(g.bank.devDeck)) g.bank.devDeck = Array(g.bank.devDeck.length).fill(null);
+  if (g.progressDecks) {
+    TRACKS.forEach((t) => { if (Array.isArray(g.progressDecks[t])) g.progressDecks[t] = Array(g.progressDecks[t].length).fill(null); });
+  }
+  if (Array.isArray(g.fishBag)) g.fishBag = Array(g.fishBag.length).fill(null);
+  g.players.forEach((p, idx) => {
+    if (idx === seat) return; // 自分の席ぶんはそのまま
+    const handCount = RESOURCES.reduce((a, r) => a + (p.resources[r] || 0), 0);
+    p.resources = emptyResources();
+    p.handCount = handCount; // 枚数だけは公開情報（実物のカードの枚数は見える）
+    p.devCards = p.devCards.map((c) => (c.played ? c : { ...c, type: null })); // 使った後は公開済み
+    if (p.commodities) {
+      const commodityCount = COMMODITIES.reduce((a, c) => a + (p.commodities[c] || 0), 0);
+      p.commodities = emptyCommodities();
+      p.commodityCount = commodityCount;
+    }
+    if (p.progressCards) p.progressCards = p.progressCards.map(() => ({ id: null, color: null }));
+    if (Array.isArray(p.fishTokens)) p.fishTokens = p.fishTokens.map(() => null);
+  });
+  // 盗賊・海賊で何を奪ったかは、奪った人と奪われた人の画面にだけ
+  if (g.lastSteal && g.lastSteal.from !== seat && g.lastSteal.to !== seat) g.lastSteal = null;
+  return g;
+}
