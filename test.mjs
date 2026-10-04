@@ -1623,6 +1623,17 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   assert.deepEqual(stillOut[0], subbed[0]);
 });
 
+test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」だけready（段階9）', async () => {
+  const { canStart, ONLINE_EXPANSIONS } = await import('./online.js');
+  const seats6 = Array.from({ length: 6 }, (_, i) => (i < 2
+    ? { type: 'human', uid: `u${i}` }
+    : { type: 'cpu', level: 'normal' }));
+  assert.equal(canStart(seats6), true);
+  assert.equal(canStart(seats6.slice(0, 5)), true);
+  assert.equal(ONLINE_EXPANSIONS.find((x) => x.id === 'none').ready, true);
+  assert.equal(ONLINE_EXPANSIONS.filter((x) => x.id !== 'none').every((x) => x.ready === false), true);
+});
+
 // ---- 通信対戦: 待合のQR（段階8。デコードしての一致確認はスクラッチで npm の jsQR を使って別途確認済み）----
 test('qr.js: 文字列ごとに違うSVGのQRを作る（roomQrSvgが使う部品）', async () => {
   const qrcode = (await import('./qr.js')).default;

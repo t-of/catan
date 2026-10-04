@@ -7,6 +7,7 @@ import * as CPU from './cpu.js';
 import {
   createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash, roomQrSvg,
   GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart, subSeat, freeSeat, revertSubbedSeats,
+  ONLINE_EXPANSIONS,
 } from './online.js';
 
 // localStorage はほかのアプリと共有される（同じ t-of.github.io のため）。キーは必ず 'catan.' で始める。
@@ -105,6 +106,8 @@ const els = {
   lobbyQr: document.getElementById('lobbyQr'),
   lobbyCountRow: document.getElementById('lobbyCountRow'),
   lobbyCountPicker: document.getElementById('lobbyCountPicker'),
+  lobbyExpansionRow: document.getElementById('lobbyExpansionRow'),
+  lobbyExpansionPicker: document.getElementById('lobbyExpansionPicker'),
   lobbySeats: document.getElementById('lobbySeats'),
   lobbyStartBtn: document.getElementById('lobbyStartBtn'),
   lobbyWaitText: document.getElementById('lobbyWaitText'),
@@ -215,7 +218,8 @@ let ui = { mode: 'idle', data: {} };
 let onlineRoom = null;          // room.js の Room。1台モードでは null
 let onlineMeta = null;          // 部屋の meta（settings・seats は JSON 文字列のまま持つ）
 let onlineMembers = {};         // { [uid]: { name, online, joinedAt } }
-let onlinePlayerCount = 4;      // 待合で選ぶ人数（3 or 4）
+let onlinePlayerCount = 4;      // 待合で選ぶ人数（3〜6）
+let onlineExpansion = 'none';   // 待合で選ぶ拡張（今は「なし」だけ選べる。ONLINE_EXPANSIONS）
 let onlineName = load('onlineName', '');
 let onlinePendingCode = null;   // リンク（#room=）から開いたときの、まだ入っていないコード
 let onlineSeatUids = [];        // meta.seats の uid だけを抜いた列（人の席はuid、CPUの席はnull）。自分の席を引くのに使う
@@ -655,10 +659,22 @@ function renderLobby() {
     els.lobbyQr.dataset.code = onlineRoom.code;
   }
   if (!onlineMeta) return;
-  const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
+  const settings = parseSettings(onlineMeta.settings);
+  const count = settings.playerCount || onlinePlayerCount;
+  const expansion = settings.expansion || 'none';
   const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
   els.lobbyCountRow.hidden = !onlineRoom.isHost;
   [...els.lobbyCountPicker.children].forEach((b) => b.classList.toggle('is-selected', Number(b.dataset.count) === count));
+  els.lobbyExpansionRow.hidden = !onlineRoom.isHost;
+  els.lobbyExpansionPicker.innerHTML = '';
+  ONLINE_EXPANSIONS.forEach((x) => {
+    const b = document.createElement('button');
+    b.className = 'btn' + (x.id === expansion ? ' is-selected' : '');
+    b.textContent = x.ready ? x.name : `${x.name}・準備中`;
+    b.dataset.expansion = x.id;
+    b.disabled = !x.ready;
+    els.lobbyExpansionPicker.appendChild(b);
+  });
   els.lobbySeats.innerHTML = '';
   lobbySeatsArr.forEach((seat, i) => {
     const row = document.createElement('div');
@@ -730,7 +746,9 @@ els.onlineNameNextBtn.addEventListener('click', () => {
 });
 els.onlineCreateBtn.addEventListener('click', () => {
   enterRoom(() => createRoom({
-    game: GAME, name: onlineName, settings: { playerCount: onlinePlayerCount }, seats: emptySeats(onlinePlayerCount),
+    game: GAME, name: onlineName,
+    settings: { playerCount: onlinePlayerCount, expansion: onlineExpansion },
+    seats: emptySeats(onlinePlayerCount),
   }));
 });
 els.onlineJoinBtn.addEventListener('click', () => {
@@ -745,9 +763,20 @@ els.lobbyCountPicker.addEventListener('click', (e) => {
   if (!btn || !onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
   const count = Number(btn.dataset.count);
   onlinePlayerCount = count;
-  const before = parseSeats(onlineMeta.seats, parseSettings(onlineMeta.settings).playerCount || 4);
+  const prevSettings = parseSettings(onlineMeta.settings);
+  const before = parseSeats(onlineMeta.seats, prevSettings.playerCount || 4);
   const resized = Array.from({ length: count }, (_, i) => before[i] || { type: 'human', uid: null, name: '' });
-  onlineRoom.setMeta({ settings: JSON.stringify({ playerCount: count }), seats: JSON.stringify(resized) });
+  onlineRoom.setMeta({
+    settings: JSON.stringify({ playerCount: count, expansion: prevSettings.expansion || 'none' }),
+    seats: JSON.stringify(resized),
+  });
+});
+els.lobbyExpansionPicker.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-expansion]');
+  if (!btn || btn.disabled || !onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
+  const prevSettings = parseSettings(onlineMeta.settings);
+  onlineExpansion = btn.dataset.expansion;
+  onlineRoom.setMeta({ settings: JSON.stringify({ playerCount: prevSettings.playerCount || onlinePlayerCount, expansion: onlineExpansion }) });
 });
 els.lobbySeats.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
@@ -763,14 +792,18 @@ els.lobbySeats.addEventListener('click', (e) => {
 });
 els.lobbyStartBtn.addEventListener('click', () => {
   if (!onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
-  const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
+  const startSettings = parseSettings(onlineMeta.settings);
+  const count = startSettings.playerCount || onlinePlayerCount;
   const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
   if (!canStart(lobbySeatsArr)) return;
   seats = lobbySeatsArr.map((s) => (s.type === 'cpu'
     ? { type: 'cpu', level: s.level || 'normal', name: '' }
     : { type: 'human', level: 'normal', name: s.name || '' }));
   const names = seats.map((s) => s.name);
-  game = E.createGame(count, Math.random, { expansions: [], scenario: null, names });
+  // 今開けている拡張は「なし」だけなので、未対応の値が来てもreadyなものだけ使う（準備中のボタンはクリックできない）
+  const exp = startSettings.expansion;
+  const expansions = (exp && exp !== 'none' && ONLINE_EXPANSIONS.find((x) => x.id === exp && x.ready)) ? [exp] : [];
+  game = E.createGame(count, Math.random, { expansions, scenario: null, names });
   ui = { mode: modeForPhase(), data: {} };
   onlineRoom.setMeta({ status: 'playing' });
   onlineRoom.publish(JSON.stringify(game));

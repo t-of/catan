@@ -24,6 +24,16 @@ function parseSettings(json) {
   try { return JSON.parse(json || '{}') || {}; } catch { return {}; }
 }
 
+// 通信対戦で選べる拡張（段階9）。1つずつ ready: true にして開ける。表に足すだけで済むようにしてある
+const ONLINE_EXPANSIONS = [
+  { id: 'none', name: 'なし', ready: true },
+  { id: 'seafarers', name: '航海者版', ready: false },
+  { id: 'cities-knights', name: '都市と騎士', ready: false },
+  { id: 'traders-barbarians', name: '交易と略奪', ready: false },
+  { id: 'soccer', name: 'サッカー熱', ready: false },
+  { id: 'explorers-pirates', name: '探検家と海賊', ready: false },
+];
+
 // members（全員）のうち座っていない人を、空いている人の席に座らせる（ホストだけが呼ぶ）
 function seatMembers(seats, members) {
   const next = seats.map((s) => ({ ...s }));
@@ -81,4 +91,5 @@ function roomQrSvg(code) {
 export {
   createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash, roomQrSvg,
   GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart, subSeat, freeSeat, revertSubbedSeats,
+  ONLINE_EXPANSIONS,
 };
