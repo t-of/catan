@@ -264,6 +264,7 @@ const els = {
   hostGoneBtn: document.getElementById('hostGoneBtn'),
   turnNum: document.getElementById('turnNum'),
   board: document.getElementById('board'),
+  stage: document.getElementById('stage'),
   diceBox: document.getElementById('diceBox'),
   hint: document.getElementById('hint'),
   banner: document.getElementById('banner'),
@@ -339,6 +340,7 @@ function buildIcon(key, color) {
 function dieEl(value, rotateDeg) {
   const wrap = document.createElement('div');
   wrap.className = 'die';
+  wrap.style.setProperty('--r', `${rotateDeg}deg`); // CSSの弾むアニメがこの回転を保ったまま拡大縮小できるように
   wrap.style.transform = `rotate(${rotateDeg}deg)`;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', 40); svg.setAttribute('height', 40); svg.setAttribute('viewBox', '0 0 46 46');
@@ -360,6 +362,26 @@ let game = null;
 let robberMovedAt = 0, lastRobberHex = null; // 盗賊が動いた時刻（動いた直後に点滅させる）
 let pirateMovedAt = 0, lastPirateHex = null; // 海賊版（航海者版のみ使う）
 let diceHitAt = 0, diceHitHexes = []; // サイコロで当たったタイル（振った直後だけ光らせて暗くする）
+
+// サイコロの合計に応じた盛り上げ（6・8はよく当たる目、7は盗賊、2・12は珍しい目）。
+// 「動き オフ」では揺れ・点滅はせず、色の変化だけに留める（音はそのまま鳴らす）。spinDiceOnce の最後と、
+// アニメを出さずに結果だけ反映する経路（通信対戦の自分の番・動き オフ）の両方から呼ぶ。
+function applyDiceSumEffects(sum) {
+  if (sum == null) return;
+  const quiet = document.documentElement.classList.contains('motion-off');
+  if (sum === 7) {
+    playSound('rob');
+    els.stage.classList.add('stage--seven');
+    setTimeout(() => els.stage.classList.remove('stage--seven'), quiet ? 500 : 1100);
+  } else if (sum === 6 || sum === 8) {
+    playSound('myTurn');
+    els.diceBox.classList.add('dice--hot');
+    setTimeout(() => els.diceBox.classList.remove('dice--hot'), 900);
+  } else if ((sum === 2 || sum === 12) && !quiet) {
+    els.diceBox.classList.add('dice--rare');
+    setTimeout(() => els.diceBox.classList.remove('dice--rare'), 650);
+  }
+}
 let rolling = false; // サイコロを振るアニメの途中。この間は目の表示をアニメに任せる
 let playerCount = load('playerCount', 3);
 if (![3, 4, 5, 6].includes(playerCount)) playerCount = 3;
@@ -737,9 +759,14 @@ function wireOnlineRoom() {
     ui = { mode: modeForPhase(), data: {} };
     const skipSpin = selfRolledPending;
     selfRolledPending = false;
-    const hadDice = !skipSpin && game.events.includes('dice') && !document.documentElement.classList.contains('motion-off');
-    if (hadDice) spinDiceOnce(() => { playEvents(); renderAll(); });
-    else { playEvents(); renderAll(); }
+    const dicedEvt = game.events.includes('dice');
+    const hadDice = !skipSpin && dicedEvt && !document.documentElement.classList.contains('motion-off');
+    if (hadDice) spinDiceOnce(() => { playEvents(); renderAll(); }, game.diceLast);
+    else {
+      playEvents(); renderAll();
+      // アニメなしで結果だけ届いた分（動き オフ・自分で振った分の折り返し）も、合計の演出は出す
+      if (dicedEvt && game.diceLast) applyDiceSumEffects(game.diceLast[0] + game.diceLast[1]);
+    }
   });
   if (onlineRoom.isHost) onlineRoom.onAction(({ uid, name, args }) => hostApplyAction(uid, name, args));
 }
@@ -2663,33 +2690,82 @@ function renderActionBar() {
   els.endTurnBtn.disabled = !buildable;
   els.endTurnBtn.textContent = inSBP ? 'パス' : '手番を終える';
 }
-// ルーレットのように目を入れ替え、だんだん遅くして止めてから onDone を呼ぶ（振った本人・通信で見ている側の両方で使う）
-function spinDiceOnce(onDone) {
+// ルーレットのように目を入れ替え、だんだん遅くして止めてから onDone を呼ぶ（振った本人・通信で見ている側の両方で使う）。
+// 1つめを先に止め、2つめは少し（0.4〜0.6秒ほど）遅らせて止めて「溜め」を作る。
+// final（本当の出目 [d1, d2]）が分かっているときはその目に収束させ、合計に応じた演出も出す
+// （通信対戦で自分がまだ振った覚え（selfRolledPending）だけで本当の目を知らないときは final なしで渡ってくる）。
+function spinDiceOnce(onDone, final) {
   rolling = true;
   els.diceBtn.disabled = true;
   const face = () => 1 + Math.floor(Math.random() * 6);
-  let delay = 40;
-  const spin = () => {
+  const sum = final ? final[0] + final[1] : null;
+  const rotA = Math.random() * 60 - 30, rotB = Math.random() * 60 - 30;
+  let vA = face(), vB = face(), aDone = false, bDone = false, delay = 40;
+  const paint = (lockA, lockB) => {
     els.diceBox.innerHTML = '';
-    els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
-    els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
+    const dA = dieEl(vA, aDone ? -8 : rotA); if (lockA) dA.classList.add('die--lock');
+    const dB = dieEl(vB, bDone ? 7 : rotB); if (lockB) dB.classList.add('die--lock');
+    els.diceBox.appendChild(dA); els.diceBox.appendChild(dB);
+  };
+  paint();
+  const stopB = () => {
+    if (bDone) return;
+    bDone = true;
+    vB = final ? final[1] : vB;
+    applyDiceSumEffects(sum); // 箱に当たり演出の色クラスを足してから、弾む目を描く（同じ瞬間なのでCSSに間に合う）
+    paint(true, true);
+    diceClick();
+    rolling = false;
+    onDone();
+  };
+  const tick = () => {
+    if (!aDone) vA = face();
+    if (!bDone) vB = face();
+    paint();
     diceClick();
     delay *= 1.25;
-    if (delay < 260) setTimeout(spin, delay); else { rolling = false; onDone(); }
+    if (!aDone && delay >= 260) {
+      aDone = true;
+      vA = final ? final[0] : vA;
+      paint(true);
+      const until = performance.now() + 400 + Math.random() * 200;
+      const keepB = () => { // 1つめが止まったあとも、2つめだけ少しの間回り続ける
+        if (bDone) return;
+        if (performance.now() >= until) { stopB(); return; }
+        vB = face(); paint(true); diceClick();
+        setTimeout(keepB, 70);
+      };
+      keepB();
+      return;
+    }
+    if (!bDone) setTimeout(tick, delay);
   };
-  spin();
+  tick();
 }
 els.diceBtn.addEventListener('click', () => {
   if (rolling || game.phase !== 'roll' || !humansTurn()) return;
+  const guest = isOnlineGuest();
+  // ホスト・1台モードは engine をその場で呼ぶだけなので、先に出目を決めて演出をそれに合わせられる
+  // （rollDice の rng に決めた目を渡す。resolveEventDie 等その先の抽選は通常どおり Math.random に任せる）。
+  // 通信対戦のゲストは結果がホスト次第なので決め打ちできず、今までどおりただ回すだけになる。
+  const preset = guest ? null : [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
+  const presetRng = preset && (() => {
+    const queue = [(preset[0] - 0.5) / 6, (preset[1] - 0.5) / 6];
+    return () => (queue.length ? queue.shift() : Math.random());
+  })();
   const finish = () => {
-    if (isOnlineGuest()) selfRolledPending = true; // 戻ってきた状態でもう一度回転させない
-    act('rollDice', []);
+    if (guest) selfRolledPending = true; // 戻ってきた状態でもう一度回転させない
+    act('rollDice', presetRng ? [presetRng] : []);
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
     persistAndRender();
   };
-  if (document.documentElement.classList.contains('motion-off')) { finish(); return; }
-  spinDiceOnce(finish);
+  if (document.documentElement.classList.contains('motion-off')) {
+    finish();
+    if (preset) applyDiceSumEffects(preset[0] + preset[1]);
+    return;
+  }
+  spinDiceOnce(finish, preset);
 });
 els.tradeBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'tradeMenu', data: {} }; renderAll(); });
 els.devBtn.addEventListener('click', () => {
