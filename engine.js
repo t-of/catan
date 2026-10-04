@@ -313,8 +313,8 @@ function buildSeafarersBoard(rng, ext) {
   mainCoords.forEach((c, i) => hexes.push({ id: nextId++, q: c.q, r: c.r, terrain: landPool[i], number: null, edgeIds: [], vertexIds: [] }));
   waterCoords.forEach((c) => hexes.push({ id: nextId++, q: c.q, r: c.r, terrain: 'water', number: null, edgeIds: [], vertexIds: [] }));
   const islandPool = shuffle(SEAFARERS_ISLAND_TERRAIN, rng);
-  const islandHexIds = new Set();
-  islandCoords.forEach((c, i) => { const id = nextId++; hexes.push({ id, q: c.q, r: c.r, terrain: islandPool[i], number: null, edgeIds: [], vertexIds: [] }); islandHexIds.add(id); });
+  const islandHexIds = [];
+  islandCoords.forEach((c, i) => { const id = nextId++; hexes.push({ id, q: c.q, r: c.r, terrain: islandPool[i], number: null, edgeIds: [], vertexIds: [] }); islandHexIds.push(id); });
 
   const byCoord = new Map(hexes.map((h) => [`${h.q},${h.r}`, h]));
   const neighborsOf = (h) => HEX_DIRS.map(([dq, dr]) => byCoord.get(`${h.q + dq},${h.r + dr}`)).filter(Boolean);
@@ -427,7 +427,12 @@ function buildFishBag(rng, ext) {
 }
 
 // 川: 盤を横切る真ん中の列（r=0）の間の辺をつなげ、両端を盤の外周まで延ばす（簡略化。README に注記）
-function applyRiver(board) {
+// 古い保存の引き継ぎ用: 小島の座標（SEAFARERS_ISLANDS）に一致するヘクスを探して islandHexIds を作り直す（乱数を使わないので盤から復元できる）
+export function recoverIslandHexIds(board) {
+  const coords = new Set(SEAFARERS_ISLANDS.flat().map((c) => `${c.q},${c.r}`));
+  return board.hexes.filter((h) => coords.has(`${h.q},${h.r}`)).map((h) => h.id);
+}
+export function applyRiver(board) {
   const row = board.hexes.filter((h) => h.r === 0).sort((a, b) => a.q - b.q);
   const riverEdgeIds = [];
   for (let i = 0; i < row.length - 1; i++) {
@@ -438,10 +443,10 @@ function applyRiver(board) {
     const outer = h.edgeIds.find((eId) => board.edges[eId].hexIds.length === 1);
     if (outer != null && !riverEdgeIds.includes(outer)) riverEdgeIds.push(outer);
   });
-  board.riverEdgeIds = new Set(riverEdgeIds);
-  const vSet = new Set();
-  riverEdgeIds.forEach((eId) => { const e = board.edges[eId]; vSet.add(e.v1); vSet.add(e.v2); });
-  board.riverVertexIds = vSet;
+  board.riverEdgeIds = riverEdgeIds;
+  const vIds = [];
+  riverEdgeIds.forEach((eId) => { const e = board.edges[eId]; [e.v1, e.v2].forEach((v) => { if (!vIds.includes(v)) vIds.push(v); }); });
+  board.riverVertexIds = vIds;
 }
 
 // 隊商: 砂漠をオアシスとして盤の中心（必ず内陸）に固定し、周りの6辺のうち3つを各キャラバンの出発点にする
@@ -732,7 +737,7 @@ function recalcGoldRoles(game) {
 function markIslandBonus(game, idx, vertexId) {
   if (!game.board.islandHexIds || game.players[idx].islandBonus) return;
   const v = game.board.vertices[vertexId];
-  if (!v.hexIds.some((h) => game.board.islandHexIds.has(h))) return;
+  if (!v.hexIds.some((h) => game.board.islandHexIds.includes(h))) return;
   game.players[idx].islandBonus = true;
   log(game, `${playerName(game, idx)}が新しい島に開拓地を建てた（+2点）`);
   checkWin(game, idx);
@@ -1268,14 +1273,14 @@ function recalcLargestArmy(game) {
 // ---- 建設 ----
 function canBuildNow(game) { return game.phase === 'main' || game.phase === 'specialBuilding'; }
 // 川: 川をまたぐ辺に道を通すには、ふつうの道でなく橋（土2木1）が要る
-export function roadCostFor(game, edgeId) { return (game.board.riverEdgeIds && game.board.riverEdgeIds.has(edgeId)) ? BRIDGE_COST : COSTS.road; }
+export function roadCostFor(game, edgeId) { return (game.board.riverEdgeIds && game.board.riverEdgeIds.includes(edgeId)) ? BRIDGE_COST : COSTS.road; }
 
 export function buildRoad(game, edgeId, { free } = {}) {
   if (!free && !canBuildNow(game)) return false; // free はテスト用の道の直置き（長い交易路の検証など）。本来のフェイズ縛りは受けない
   const idx = currentPlayer(game);
   const p = game.players[idx];
   if (p.roads.length >= MAX_ROADS) return false;
-  const isBridge = game.board.riverEdgeIds && game.board.riverEdgeIds.has(edgeId);
+  const isBridge = game.board.riverEdgeIds && game.board.riverEdgeIds.includes(edgeId);
   if (isBridge && (p.bridges || 0) >= MAX_BRIDGES) return false; // 橋は3本まで（公式どおり）
   if (!canPlaceRoad(game, edgeId, idx)) return false;
   const cost = roadCostFor(game, edgeId);
@@ -1394,7 +1399,7 @@ export function playRoadBuilding(game, cardIdx, items) {
       if (canPlaceShip(game, id, idx) && game.players[idx].ships.length < MAX_SHIPS) {
         const e = game.board.edges[id]; e.ship = idx; e.shipPlacedTurn = game.turnNumber; game.players[idx].ships.push(id);
       }
-    } else if (!(game.board.riverEdgeIds && game.board.riverEdgeIds.has(id)) // 川: 発展カード「街道建設」で橋は作れない（公式どおり）
+    } else if (!(game.board.riverEdgeIds && game.board.riverEdgeIds.includes(id)) // 川: 発展カード「街道建設」で橋は作れない（公式どおり）
       && canPlaceRoad(game, id, idx) && game.players[idx].roads.length < MAX_ROADS) {
       game.board.edges[id].road = idx; game.players[idx].roads.push(id);
       grantRiverGold(game, idx, id, 'edge');
@@ -1608,10 +1613,10 @@ function grantRiverGold(game, idx, vertexOrEdge, kind) {
   if (game.scenario !== 'rivers') return;
   const board = game.board;
   let touches;
-  if (kind === 'vertex') touches = board.riverVertexIds.has(vertexOrEdge);
+  if (kind === 'vertex') touches = board.riverVertexIds.includes(vertexOrEdge);
   else {
     const e = board.edges[vertexOrEdge];
-    touches = board.riverEdgeIds.has(vertexOrEdge) || board.riverVertexIds.has(e.v1) || board.riverVertexIds.has(e.v2);
+    touches = board.riverEdgeIds.includes(vertexOrEdge) || board.riverVertexIds.includes(e.v1) || board.riverVertexIds.includes(e.v2);
   }
   if (!touches) return;
   game.players[idx].gold = (game.players[idx].gold || 0) + 1;

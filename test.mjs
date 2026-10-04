@@ -342,9 +342,8 @@ function withSeededRandom(seed, fn) {
   try { return fn(); } finally { Math.random = orig; }
 }
 
-// CPU だけで1局、決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
-function playOutCpu(levels, maxSteps = 500000, options = {}) {
-  const g = E.createGame(levels.length, Math.random, options);
+// 渡された game を、CPU だけで決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
+function playOutFrom(g, levels, maxSteps = 500000) {
   for (let i = 0; i < maxSteps; i++) {
     if (g.winner != null) return g;
     if (g.phase === 'discard') {
@@ -367,6 +366,40 @@ function playOutCpu(levels, maxSteps = 500000, options = {}) {
   }
   throw new Error(`${maxSteps}手では終わらなかった`);
 }
+// CPU だけで1局、決着まで進める（engine.js の公開操作だけを使う）。手が進まなければ無限ループせず止まる。
+function playOutCpu(levels, maxSteps = 500000, options = {}) {
+  return playOutFrom(E.createGame(levels.length, Math.random, options), levels, maxSteps);
+}
+
+test('保存の往復: 全部の拡張・シナリオで createGame → JSON化して戻す → CPUだけで決着する（盤のSetが配列になっている）', () => {
+  const levels = ['weak', 'normal', 'strong', 'weak'];
+  const configs = [
+    {},
+    { expansions: ['seafarers'] },
+    { expansions: ['cities-knights'] },
+    { expansions: ['soccer'] },
+    { expansions: ['explorers-pirates'] },
+    { expansions: ['traders-barbarians'], scenario: 'fishermen' },
+    { expansions: ['traders-barbarians'], scenario: 'rivers' },
+    { expansions: ['traders-barbarians'], scenario: 'caravans' },
+    { expansions: ['traders-barbarians'], scenario: 'barbarians' },
+  ];
+  for (const options of configs) {
+    const before = E.createGame(levels.length, Math.random, options);
+    const g = JSON.parse(JSON.stringify(before));
+    assert.ok(!(g.board.islandHexIds instanceof Set), 'islandHexIds が配列でない（JSONの往復で消えた）');
+    assert.ok(!(g.board.riverEdgeIds instanceof Set), 'riverEdgeIds が配列でない（JSONの往復で消えた）');
+    const after = playOutFrom(g, levels, 1500000);
+    assert.ok(after.winner != null, `${JSON.stringify(options)} が決着しない`);
+  }
+  // 5〜6人（航海者版・探検家と海賊は小島があるので island の往復も確かめる）
+  for (const options of [{}, { expansions: ['seafarers'] }, { expansions: ['explorers-pirates'] }]) {
+    const before = E.createGame(6, Math.random, options);
+    const g = JSON.parse(JSON.stringify(before));
+    const after = playOutFrom(g, ['weak', 'normal', 'strong', 'weak', 'normal', 'strong'], 1500000);
+    assert.ok(after.winner != null, `6人 ${JSON.stringify(options)} が決着しない`);
+  }
+});
 
 test('CPU: 4人（強さいろいろ）で数十局、全局きちんと決着する', () => {
   const mixes = [
@@ -431,7 +464,7 @@ test('航海者版: 本島19＋海18＋小島6＝43マス。金の川1枚・小�
     g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
     assert.equal(counts.water, 18);
     assert.equal(counts.gold, 1);
-    assert.equal(g.board.islandHexIds.size, 6);
+    assert.equal(g.board.islandHexIds.length, 6);
     assert.equal(g.board.hexes[g.board.robberHex].terrain, 'desert');
     assert.equal(g.board.hexes[g.board.pirateHex].terrain, 'water');
     // 金の川にも数字チップがある
@@ -557,7 +590,7 @@ test('航海者版×5〜6人: 本島30＋海22＋小島6＝58マス。銀行24�
       assert.equal(counts.water, 22);
       assert.equal(counts.gold, 1);
       assert.equal(counts.desert, 1);
-      assert.equal(g.board.islandHexIds.size, 6);
+      assert.equal(g.board.islandHexIds.length, 6);
       assert.deepEqual(g.bank.resources, { wood: 24, brick: 24, sheep: 24, wheat: 24, ore: 24 });
       assert.equal(g.bank.devDeck.length, 34);
     }
@@ -1057,10 +1090,10 @@ test('交易と略奪・川: 勝利点10点。開拓地・道は建てると金�
   // セットアップの開拓地として置く（つながりのルールを気にせず置けるので、道・開拓地それぞれの金貨を確かめやすい）
   g.phase = 'setup1'; g.setupOrder = [0]; g.setupIndex = 0; g.setupPending = 'settlement';
   const riverVerts = [...g.board.riverVertexIds];
-  const v = riverVerts.find((vid) => g.board.vertices[vid].edgeIds.some((eId) => g.board.riverEdgeIds.has(eId) || g.board.riverVertexIds.has(g.board.edges[eId].v1) && g.board.riverVertexIds.has(g.board.edges[eId].v2))) || riverVerts[0];
+  const v = riverVerts.find((vid) => g.board.vertices[vid].edgeIds.some((eId) => g.board.riverEdgeIds.includes(eId) || g.board.riverVertexIds.includes(g.board.edges[eId].v1) && g.board.riverVertexIds.includes(g.board.edges[eId].v2))) || riverVerts[0];
   assert.ok(E.setupPlaceSettlement(g, v));
   assert.equal(g.players[0].gold, 1); // 開拓地で金貨1枚
-  const edge = g.board.vertices[v].edgeIds.find((eId) => g.board.riverVertexIds.has(v) && (g.board.edges[eId].v1 === v || g.board.edges[eId].v2 === v));
+  const edge = g.board.vertices[v].edgeIds.find((eId) => g.board.riverVertexIds.includes(v) && (g.board.edges[eId].v1 === v || g.board.edges[eId].v2 === v));
   assert.ok(E.setupPlaceRoad(g, edge));
   assert.equal(g.players[0].gold, 2); // 道でさらに金貨1枚
   g.phase = 'main'; g.turn = 0;

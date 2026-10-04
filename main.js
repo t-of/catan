@@ -331,6 +331,9 @@ function migrateGame(g) {
     g.soccerLastResult = g.soccerLastResult || null;
   }
   if (g.scenario === 'fishermen') { g.fishBag = g.fishBag || []; g.fishUsed = g.fishUsed || []; }
+  // 古い保存は盤の islandHexIds・riverEdgeIds・riverVertexIds が Set のまま JSON を通って {} になっているので、盤から作り直す
+  if (g.board.islandHexIds && !Array.isArray(g.board.islandHexIds)) g.board.islandHexIds = E.recoverIslandHexIds(g.board);
+  if (g.board.riverEdgeIds && !Array.isArray(g.board.riverEdgeIds)) E.applyRiver(g.board);
   if (g.scenario === 'caravans' && g.board.camelEdgeA !== undefined) {
     // 古い（投票より前の）隊商の保存は、盤の形が変わっているので続きからは諦めて空のキャラバンとして引き継ぐ
     g.board.caravans = g.board.caravans || [[], [], []];

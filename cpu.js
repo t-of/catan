@@ -20,7 +20,7 @@ function pip(n) { return n == null ? 0 : 6 - Math.abs(7 - n); }
 // 川の橋は3本まで＆道より高いので、置ける辺の中で実際に建てられる辺だけに絞る（でないと詰まる）
 function affordableRoadEdge(game, idx, eId) {
   const p = game.players[idx];
-  const isBridge = game.board.riverEdgeIds && game.board.riverEdgeIds.has(eId);
+  const isBridge = game.board.riverEdgeIds && game.board.riverEdgeIds.includes(eId);
   if (isBridge && (p.bridges || 0) >= E.MAX_BRIDGES) return false;
   return affordable(p.resources, E.roadCostFor(game, eId));
 }
@@ -206,7 +206,7 @@ function playRandomDev(game, idx, entries) {
 function pickRoadBuildingItems(game, idx, level) {
   // 川: 発展カード「街道建設」で橋は作れない（公式どおり）
   const roads = E.availableRoadEdges(game, idx)
-    .filter((e) => !(game.board.riverEdgeIds && game.board.riverEdgeIds.has(e)))
+    .filter((e) => !(game.board.riverEdgeIds && game.board.riverEdgeIds.includes(e)))
     .map((e) => ({ item: e, s: roadValue(game, e, idx, level) }));
   const ships = E.availableShipEdges(game, idx).map((e) => ({ item: { id: e, kind: 'ship' }, s: roadValue(game, e, idx, level) }));
   return roads.concat(ships).sort((a, b) => b.s - a.s).slice(0, 2).map((x) => x.item);
