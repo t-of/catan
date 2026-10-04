@@ -1669,16 +1669,51 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   assert.deepEqual(stillOut[0], subbed[0]);
 });
 
-test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」「航海者版」「都市と騎士」がready（段階9〜9-3）', async () => {
+test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」「航海者版」「都市と騎士」「交易と略奪」がready（段階9〜9-4）', async () => {
   const { canStart, ONLINE_EXPANSIONS } = await import('./online.js');
   const seats6 = Array.from({ length: 6 }, (_, i) => (i < 2
     ? { type: 'human', uid: `u${i}` }
     : { type: 'cpu', level: 'normal' }));
   assert.equal(canStart(seats6), true);
   assert.equal(canStart(seats6.slice(0, 5)), true);
-  const readyIds = ['none', 'seafarers', 'cities-knights'];
+  const readyIds = ['none', 'seafarers', 'cities-knights', 'traders-barbarians'];
   assert.deepEqual(ONLINE_EXPANSIONS.filter((x) => x.ready).map((x) => x.id), readyIds);
   assert.equal(ONLINE_EXPANSIONS.filter((x) => !readyIds.includes(x.id)).every((x) => x.ready === false), true);
+});
+
+// 通信対戦9-4: 交易と略奪を開ける。漁師・川・隊商・蛮族の襲撃の操作はすべてengineがcurrentPlayer(game)で
+// 動く（buildWarKnight・resolveBarbarianStealなど）ので、都市と騎士と同じくmain.jsのONLINE_TURN_ACTIONS側で
+// 送り主の席とE.actingPlayerの一致を確かめる必要がある。代表としてbuildWarKnight・resolveBarbarianStealで確かめる
+test('交易と略奪: buildWarKnight/resolveBarbarianStealはcurrentPlayerにしか当たらない（手番の確かめはホスト側の責任）', () => {
+  const g = tbGame('barbarians');
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 1;
+  g.players.forEach((p) => { p.resources = { wood: 0, brick: 0, sheep: 2, wheat: 0, ore: 2 }; });
+  assert.equal(E.currentPlayer(g), 1);
+  const edges = E.availableWarKnightEdges(g, 1);
+  assert.ok(edges.length > 0);
+  assert.ok(E.buildWarKnight(g, edges[0])); // 手番(1)の騎士として置かれる
+  assert.equal(g.players[1].warKnights.length, 1);
+  assert.equal(g.players[0].warKnights.length, 0); // 手番でない0の騎士にはならない
+
+  g.players[0].resources = { wood: 1, brick: 0, sheep: 0, wheat: 0, ore: 0 }; // 盗める資源をwood1枚だけにして結果を決め打ちにする
+  g.phase = 'barbarianSteal';
+  assert.ok(E.resolveBarbarianSteal(g, 0)); // 誰が送っても「現在の手番(1)」として処理される
+  assert.equal(g.players[0].resources.wood, 0); // 手番(1)が0から奪った
+});
+
+// submitCamelBid（隊商のラクダ投票）は、入札の順番(pendingCamelVote.order)が手番の人(currentPlayer)と
+// 一致するとは限らないので、ONLINE_TURN_ACTIONSでなくONLINE_SELF_ACTIONS（席番号はホストが入れる）で扱う。
+// その必要性を、actingPlayerと入札者が一致しない場面で確かめる
+test('交易と略奪・隊商: submitCamelBidは入札順で決まり、手番(currentPlayer)とは限らない席でも受けられる', () => {
+  const g = tbGame('caravans', 4);
+  g.turn = 1; g.turnNumber = 1;
+  g.players.forEach((p) => { p.resources = { wood: 0, brick: 0, sheep: 2, wheat: 2, ore: 0 }; });
+  g.pendingCamelVote = { order: [2, 3, 0, 1], idx: 0, bids: {} };
+  g.phase = 'camelVote';
+  assert.equal(E.currentPlayer(g), 1); // 手番は1のままだが、最初に入札するのは2
+  assert.equal(E.submitCamelBid(g, 1, {}), false); // 手番の1が送っても、入札の順でなければ断られる
+  assert.ok(E.submitCamelBid(g, 2, {})); // 入札の順(2)なら通る
+  assert.equal(g.pendingCamelVote.idx, 1);
 });
 
 // 通信対戦9-3: 都市と騎士を開ける。都市の発展・都市壁・騎士(建てる/起動/昇格/移動/追い出す/盗賊払い)・

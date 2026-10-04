@@ -108,6 +108,8 @@ const els = {
   lobbyCountPicker: document.getElementById('lobbyCountPicker'),
   lobbyExpansionRow: document.getElementById('lobbyExpansionRow'),
   lobbyExpansionPicker: document.getElementById('lobbyExpansionPicker'),
+  lobbyScenarioRow: document.getElementById('lobbyScenarioRow'),
+  lobbyScenarioPicker: document.getElementById('lobbyScenarioPicker'),
   lobbySeats: document.getElementById('lobbySeats'),
   lobbyStartBtn: document.getElementById('lobbyStartBtn'),
   lobbyWaitText: document.getElementById('lobbyWaitText'),
@@ -590,6 +592,9 @@ const ONLINE_TURN_ACTIONS = new Set([
   'buildShip', 'moveShip', // 航海者版
   'improveCity', 'buildWall', 'buildKnight', 'activateKnight', 'upgradeKnight',
   'moveKnight', 'expelKnight', 'chaseRobber', 'playProgressCard', 'tradeCommodity', // 都市と騎士
+  'fishRobberAway', 'fishSteal', 'fishResource', 'fishRoad', 'fishDevCard', 'giveOldBoot', // 交易と略奪・漁師
+  'tradeGold', 'tradeResourceForGold', // 交易と略奪・川
+  'placeCamel', 'buildWarKnight', 'moveWarKnight', 'resolveBarbarianSteal', // 交易と略奪・隊商/蛮族の襲撃
 ]);
 // 手番と関係なく、自分の分を片付ける操作（席番号は信用せず、ホストが送り主から引いた席で上書きする）
 const ONLINE_SELF_ACTIONS = new Set(['discardCards', 'pickGold', 'pickScienceBonus', 'submitCamelBid']);
@@ -665,6 +670,7 @@ function renderLobby() {
   const settings = parseSettings(onlineMeta.settings);
   const count = settings.playerCount || onlinePlayerCount;
   const expansion = settings.expansion || 'none';
+  const scenario = E.TB_SCENARIOS.includes(settings.scenario) ? settings.scenario : 'fishermen';
   const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
   els.lobbyCountRow.hidden = !onlineRoom.isHost;
   [...els.lobbyCountPicker.children].forEach((b) => b.classList.toggle('is-selected', Number(b.dataset.count) === count));
@@ -678,6 +684,8 @@ function renderLobby() {
     b.disabled = !x.ready;
     els.lobbyExpansionPicker.appendChild(b);
   });
+  els.lobbyScenarioRow.hidden = !onlineRoom.isHost || expansion !== 'traders-barbarians';
+  [...els.lobbyScenarioPicker.children].forEach((b) => b.classList.toggle('is-selected', b.dataset.scenario === scenario));
   els.lobbySeats.innerHTML = '';
   lobbySeatsArr.forEach((seat, i) => {
     const row = document.createElement('div');
@@ -770,7 +778,7 @@ els.lobbyCountPicker.addEventListener('click', (e) => {
   const before = parseSeats(onlineMeta.seats, prevSettings.playerCount || 4);
   const resized = Array.from({ length: count }, (_, i) => before[i] || { type: 'human', uid: null, name: '' });
   onlineRoom.setMeta({
-    settings: JSON.stringify({ playerCount: count, expansion: prevSettings.expansion || 'none' }),
+    settings: JSON.stringify({ playerCount: count, expansion: prevSettings.expansion || 'none', scenario: prevSettings.scenario }),
     seats: JSON.stringify(resized),
   });
 });
@@ -779,7 +787,13 @@ els.lobbyExpansionPicker.addEventListener('click', (e) => {
   if (!btn || btn.disabled || !onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
   const prevSettings = parseSettings(onlineMeta.settings);
   onlineExpansion = btn.dataset.expansion;
-  onlineRoom.setMeta({ settings: JSON.stringify({ playerCount: prevSettings.playerCount || onlinePlayerCount, expansion: onlineExpansion }) });
+  onlineRoom.setMeta({ settings: JSON.stringify({ playerCount: prevSettings.playerCount || onlinePlayerCount, expansion: onlineExpansion, scenario: prevSettings.scenario }) });
+});
+els.lobbyScenarioPicker.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-scenario]');
+  if (!btn || !onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
+  const prevSettings = parseSettings(onlineMeta.settings);
+  onlineRoom.setMeta({ settings: JSON.stringify({ playerCount: prevSettings.playerCount || onlinePlayerCount, expansion: prevSettings.expansion || 'none', scenario: btn.dataset.scenario }) });
 });
 els.lobbySeats.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
@@ -803,10 +817,11 @@ els.lobbyStartBtn.addEventListener('click', () => {
     ? { type: 'cpu', level: s.level || 'normal', name: '' }
     : { type: 'human', level: 'normal', name: s.name || '' }));
   const names = seats.map((s) => s.name);
-  // 今開けている拡張は「なし」だけなので、未対応の値が来てもreadyなものだけ使う（準備中のボタンはクリックできない）
+  // readyな拡張だけ使う（準備中のボタンはクリックできない）。交易と略奪はシナリオも送る（それ以外はnullのままでよい）
   const exp = startSettings.expansion;
   const expansions = (exp && exp !== 'none' && ONLINE_EXPANSIONS.find((x) => x.id === exp && x.ready)) ? [exp] : [];
-  game = E.createGame(count, Math.random, { expansions, scenario: null, names });
+  const scenario = exp === 'traders-barbarians' && E.TB_SCENARIOS.includes(startSettings.scenario) ? startSettings.scenario : null;
+  game = E.createGame(count, Math.random, { expansions, scenario, names });
   ui = { mode: modeForPhase(), data: {} };
   onlineRoom.setMeta({ status: 'playing' });
   onlineRoom.publish(JSON.stringify(game));
@@ -1773,13 +1788,14 @@ function renderPanel() {
     return;
   }
   if (game.phase === 'camelVote' && game.pendingCamelVote) {
+    // 通信対戦では「今入札する人」の画面だけに出す（手札欄と同じ考え方。isCpuSeatだけだと人である全員の画面に出てしまう）
     const acting = game.pendingCamelVote.order[game.pendingCamelVote.idx];
-    if (isCpuSeat(acting)) { closePanel(); return; }
+    if (onlineRoom ? acting !== mySeatIndex() : isCpuSeat(acting)) { closePanel(); return; }
     openPanel(); renderCamelVotePanel(acting); return;
   }
   if (game.phase === 'barbarianSteal') {
     const idx = E.currentPlayer(game);
-    if (isCpuSeat(idx)) { closePanel(); return; }
+    if (onlineRoom ? idx !== mySeatIndex() : isCpuSeat(idx)) { closePanel(); return; }
     openPanel(); renderBarbarianStealPanel(idx); return;
   }
   if (ui.data.pendingHex != null) { openPanel(); renderRobberTargetPanel(ui.data.pendingHex, ui.data.forDev); return; }
