@@ -635,6 +635,7 @@ export function createGame(playerCount, rng = Math.random, options = {}) {
     longestRoadPlayer: null,
     largestArmyPlayer: null,
     winner: null,
+    lastSteal: null, // 通信対戦: 直前に盗賊/海賊で奪った内容 { from, to, res }。main.js が奪った人・奪われた人の画面にだけ出す
     events: [], // 音・演出のきっかけ。main.js が読んで clear する
     log: [],
     // 都市と騎士
@@ -1180,10 +1181,11 @@ export function banditTargets(game, hexId, playerIdx) {
 function stealFrom(game, fromIdx, toIdx) {
   const res = game.players[fromIdx].resources;
   const pool = RESOURCES.flatMap((r) => Array(res[r]).fill(r));
-  if (!pool.length) return;
+  if (!pool.length) return null;
   const picked = pool[Math.floor(Math.random() * pool.length)];
   res[picked]--;
   game.players[toIdx].resources[picked]++;
+  return picked;
 }
 export function moveRobber(game, hexId, targetPlayerIdx) {
   if (game.phase !== 'moveRobber') return false;
@@ -1197,7 +1199,14 @@ export function moveRobber(game, hexId, targetPlayerIdx) {
   const targets = isWater ? pirateTargets(game, hexId, idx) : robberTargets(game, hexId, idx);
   if (targets.length && !targets.includes(targetPlayerIdx)) return false;
   if (isWater) game.board.pirateHex = hexId; else game.board.robberHex = hexId;
-  if (targets.length) { stealFrom(game, targetPlayerIdx, idx); log(game, `${playerName(game, idx)}が${playerName(game, targetPlayerIdx)}から1枚奪った`); }
+  if (targets.length) {
+    const res = stealFrom(game, targetPlayerIdx, idx);
+    log(game, `${playerName(game, idx)}が${playerName(game, targetPlayerIdx)}から1枚奪った`);
+    // 通信対戦: 何を奪ったかは、奪った人と奪われた人の画面にだけ出す（main.js の renderBanner）
+    game.lastSteal = { from: targetPlayerIdx, to: idx, res };
+  } else {
+    game.lastSteal = null;
+  }
   fire(game, 'rob');
   game.phase = 'main';
   return true;
@@ -2373,6 +2382,7 @@ function resolveSoccerMatchday(game) {
 }
 export function endTurn(game) {
   if (game.phase !== 'main') return false;
+  game.lastSteal = null; // 通信対戦: 奪われた知らせは次の手番まで（main.js の renderBanner が見る）
   game.devCardPlayedThisTurn = false;
   if (game.scenario === 'barbarians') resolveBarbarianExpel(game, game.turn);
   if (game.soccer && game.pendingSoccerMatch && !game.soccerSeasonOver) resolveSoccerMatchday(game);

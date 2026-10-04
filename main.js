@@ -66,6 +66,7 @@ const SOUND = {
   rob: () => beep(220, 0.2),
   win: () => { beep(660, 0.15); setTimeout(() => beep(880, 0.25), 140); },
   shortage: () => beep(180, 0.08),
+  myTurn: () => beep(700, 0.1), // 通信対戦: 自分の番になった（手番の音より少し高く）
 };
 
 // ---- DOM ----
@@ -206,7 +207,15 @@ let onlineMembers = {};         // { [uid]: { name, online, joinedAt } }
 let onlinePlayerCount = 4;      // 待合で選ぶ人数（3 or 4）
 let onlineName = load('onlineName', '');
 let onlinePendingCode = null;   // リンク（#room=）から開いたときの、まだ入っていないコード
+let onlineSeatUids = [];        // meta.seats の uid だけを抜いた列（人の席はuid、CPUの席はnull）。自分の席を引くのに使う
+let selfRolledPending = false;  // 通信: 自分がサイコロを振った直後、戻ってきた状態でもう一度回転させないための印
 function isOnlineGuest() { return !!(onlineRoom && !onlineRoom.isHost); }
+// 自分（このブラウザのuid）がどの席か。CPU席・座っていない席・1台モードではnull
+function mySeatIndex() {
+  if (!onlineRoom) return null;
+  const i = onlineSeatUids.indexOf(onlineRoom.uid);
+  return i === -1 ? null : i;
+}
 
 // ---- 人数選び ----
 els.playerCountPicker.addEventListener('click', (e) => {
@@ -449,7 +458,9 @@ function hostSyncSeats() {
 function applySeatsFromMeta(meta) {
   if (!meta) return;
   const count = parseSettings(meta.settings).playerCount || onlinePlayerCount;
-  seats = parseSeats(meta.seats, count).map((s) => (s.type === 'cpu'
+  const parsed = parseSeats(meta.seats, count);
+  onlineSeatUids = parsed.map((s) => (s.type === 'human' ? (s.uid || null) : null));
+  seats = parsed.map((s) => (s.type === 'cpu'
     ? { type: 'cpu', level: s.level || 'normal', name: '' }
     : { type: 'human', level: 'normal', name: s.name || '' }));
 }
@@ -467,10 +478,47 @@ function wireOnlineRoom() {
     renderLobby();
   });
   onlineRoom.onState((json) => {
+    // ホストは自分の手元のgameが正本なので、自分が配った状態のこだまは読み直さない（二重に音を鳴らさないため）
+    if (onlineRoom.isHost) return;
     try { game = JSON.parse(json); } catch { return; }
     ui = { mode: modeForPhase(), data: {} };
-    renderAll();
+    const skipSpin = selfRolledPending;
+    selfRolledPending = false;
+    const hadDice = !skipSpin && game.events.includes('dice') && !document.documentElement.classList.contains('motion-off');
+    if (hadDice) spinDiceOnce(() => { playEvents(); renderAll(); });
+    else { playEvents(); renderAll(); }
   });
+  if (onlineRoom.isHost) onlineRoom.onAction(({ uid, name, args }) => hostApplyAction(uid, name, args));
+}
+
+// ---- 通信対戦: ホストが届いた操作を当てる（2-2の表どおり確かめてからengineを呼ぶ） ----
+// 手番の人だけができる操作（送り主の席がE.actingPlayerと一致するか確かめる）
+const ONLINE_TURN_ACTIONS = new Set([
+  'rollDice', 'buildRoad', 'buildSettlement', 'buildCity', 'buyDevCard',
+  'bankTrade', 'moveRobber', 'endTurn', 'passSpecialBuild',
+  'setupPlaceSettlement', 'setupPlaceRoad',
+  'playYearOfPlenty', 'playMonopoly', 'playRoadBuilding',
+]);
+// 手番と関係なく、自分の分を片付ける操作（席番号は信用せず、ホストが送り主から引いた席で上書きする）
+const ONLINE_SELF_ACTIONS = new Set(['discardCards', 'pickGold', 'pickScienceBonus', 'submitCamelBid']);
+function hostApplyAction(uid, name, rawArgs) {
+  if (!game || game.winner != null) return;
+  const seat = onlineSeatUids.indexOf(uid);
+  if (seat === -1) return; // 席の持ち主でない（表の「どれでもない」）
+  const args = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  if (ONLINE_TURN_ACTIONS.has(name)) {
+    if (seat !== E.actingPlayer(game)) return; // 自分の番でないのに押した／なりすまし
+  } else if (ONLINE_SELF_ACTIONS.has(name)) {
+    args[0] = seat; // 自分の席番号は送らせない。ホストが入れる
+  } else {
+    return; // 表にない操作は捨てる
+  }
+  if (typeof E[name] !== 'function') return;
+  const ok = E[name](game, ...args);
+  if (ok === false || ok == null) return; // engine 自身が断った（資源が足りない、置けない場所など）
+  ui = { mode: modeForPhase(), data: {} };
+  playEvents();
+  persistAndRender();
 }
 
 function renderLobby() {
@@ -634,24 +682,33 @@ function modeForPhase() {
 }
 
 // ルールを書き換える操作は、必ずここを通す（通信対戦の送り口をここ1つにまとめるため）。
-// 1台モード・通信のホストは engine の同じ名前の関数をその場で呼ぶ。通信のゲストはまだ操作を送れない
-// （段階5で room.send に差し替える。今は「同じ盤が出る」までなので、ゲストの画面は見るだけ）。
+// 1台モード・通信のホストは engine の同じ名前の関数をその場で呼ぶ（ホストは自分の分もここで直接呼んでよい。
+// humansTurn が自分の席の番かを先に確かめているので、ここでは二重に確かめない）。
+// 通信のゲストは room.send でホストにお願いし、戻ってくる状態（onState）を待つ。
 function act(name, args) {
-  if (isOnlineGuest()) return false;
+  if (isOnlineGuest()) { onlineRoom.send(name, args || []); return true; }
   return E[name](game, ...(args || []));
 }
 
 // 通信対戦では catan.game に保存しない（1台モードの「つづきから」を消さないため）。
-// ホストは操作のたびに部屋へ配る。ゲストは onState で受け取るだけなのでここは通らない。
+// ホストは操作のたびに部屋へ配る。events/gains はゲスト側で鳴らすため、配り終えるまで空にしない
+// （playEvents がホストでは splice せず残す。ここで配り終えてから空にする）。ゲストは onState 側で処理する。
 function persistAndRender() {
-  if (onlineRoom) { if (onlineRoom.isHost) onlineRoom.publish(JSON.stringify(game)); }
-  else save('game', game);
+  if (onlineRoom) {
+    if (onlineRoom.isHost) {
+      onlineRoom.publish(JSON.stringify(game));
+      game.events.length = 0;
+      game.gains = [];
+    }
+  } else save('game', game);
   renderAll();
 }
 
 function playEvents() {
   if (!game) return;
-  const evts = game.events.splice(0, game.events.length);
+  // ホストは配り終える（persistAndRender）までevents/gainsを残す。ゲストと1台モードはここで使い切る
+  const hostHold = onlineRoom && onlineRoom.isHost;
+  const evts = hostHold ? game.events.slice() : game.events.splice(0, game.events.length);
   evts.forEach((e) => { if (SOUND[e]) SOUND[e](); });
   if (lastRobberHex != null && game.board.robberHex !== lastRobberHex) {
     robberMovedAt = Date.now();
@@ -670,7 +727,7 @@ function playEvents() {
       setTimeout(() => { if (game) renderAll(); }, 1600); // 点滅・暗転を止める
     }
   }
-  flyGains((game.gains || []).splice(0));
+  flyGains(hostHold ? (game.gains || []).slice() : (game.gains || []).splice(0));
 }
 
 // もらった資源を、マスから手札（手番の人）かプレイヤー欄（ほかの人）へ飛ばす。
@@ -679,7 +736,7 @@ function flyGains(gains) {
   if (!gains.length || document.documentElement.classList.contains('motion-off')) return;
   const ctm = els.board.getScreenCTM();
   if (!ctm) return;
-  const cur = E.currentPlayer(game);
+  const cur = handSeatIndex();
   const gainTotals = {};
   gains.forEach((gn) => { if (gn.player === cur) gainTotals[gn.res] = (gainTotals[gn.res] || 0) + gn.amt; });
   Object.entries(gainTotals).forEach(([res, amt]) => {
@@ -759,8 +816,7 @@ function scheduleCpu() {
     else CPU.step(game, seatLevel(E.actingPlayer(game)));
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
-    if (onlineRoom) onlineRoom.publish(JSON.stringify(game)); else save('game', game);
-    renderAll();
+    persistAndRender();
     scheduleCpu();
   }, CPU_SPEEDS[cpuSpeed][1]);
 }
@@ -1181,8 +1237,13 @@ function renderBank() {
   els.bankPanel.appendChild(grid);
 }
 
+// 手札の欄に出す席。通信対戦では「自分の席」（相手の手札は見せない）。1台モードは今までどおり手番の人
+function handSeatIndex() {
+  if (onlineRoom) { const s = mySeatIndex(); return s == null ? E.currentPlayer(game) : s; }
+  return E.currentPlayer(game);
+}
 function renderHand() {
-  const idx = E.currentPlayer(game);
+  const idx = handSeatIndex();
   const p = game.players[idx];
   els.handBar.innerHTML = '';
   E.RESOURCES.forEach((r) => {
@@ -1332,6 +1393,15 @@ function renderBanner() {
   else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: ${game.players[idx].name}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
   if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
+  if (onlineRoom && game.winner == null) {
+    const mySeat = mySeatIndex();
+    if (game.phase !== 'discard' && mySeat === idx) main += ' あなたの番です。';
+    if (game.lastSteal) {
+      const { from, to, res } = game.lastSteal;
+      if (mySeat === to) main += ` ${game.players[from].name}から${RES_LABEL[res]}を1枚奪った。`;
+      else if (mySeat === from) main += ` ${game.players[to].name}に${RES_LABEL[res]}を1枚取られた。`;
+    }
+  }
   if (ui.mode === 'buildRoad') hint = '道を置く場所をタップ。';
   else if (ui.mode === 'buildSettlement') hint = '開拓地を置く場所をタップ。';
   else if (ui.mode === 'buildCity') hint = '都市にする開拓地をタップ。';
@@ -1470,9 +1540,12 @@ function openPanel() { els.panelOverlay.hidden = false; }
 function closePanel() { els.panelOverlay.hidden = true; els.panel.innerHTML = ''; }
 
 function renderPanel() {
-  // 捨て札はCPUの分を先に片付けてよいので、人が窓で捨てるのは「人の席でまだ残っている分」だけ
+  // 捨て札はCPUの分を先に片付けてよいので、人が窓で捨てるのは「人の席でまだ残っている分」だけ。
+  // 通信対戦では「自分の席の分」だけを出す（ほかの人は各自の端末で同時に捨てる）
   if (ui.mode === 'discard' && game.phase === 'discard') {
-    const d = game.pendingDiscards.find((x) => !isCpuSeat(x.player));
+    const d = onlineRoom
+      ? game.pendingDiscards.find((x) => x.player === mySeatIndex())
+      : game.pendingDiscards.find((x) => !isCpuSeat(x.player));
     if (d) { openPanel(); renderDiscardPanel(d); }
     else closePanel();
     return;
@@ -1704,16 +1777,20 @@ function renderTradeMenu() {
       <h2>探検家と海賊（霧のマスを見つけた数 ${p.epRevealed || 0}/3${game.epMissionWinner === idx ? '・探検ミッション達成+1点' : ''}）</h2>`;
   }
 
-  els.panel.innerHTML = `<h2>銀行・港と交易</h2>
-    <div class="sheet__row"><span>出す（${rate}枚で1枚）</span><div class="res-pick" data-row="give"></div></div>
-    <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="want"></div></div>
-    <button class="btn btn--accent" data-act="bank" ${p.resources[give] >= rate && give !== want ? '' : 'disabled'}>${rate}:1で交易する</button>
-    <hr style="border-color:rgba(255,255,255,0.15)">
+  // 通信対戦では相手との交易（1件ずつ申し込んで返事を待つ）は段階6。今回はいきなり成立させる窓は出さない
+  const pTradeHtml = onlineRoom
+    ? `<hr style="border-color:rgba(255,255,255,0.15)"><p style="opacity:.8">相手との交易は次の更新で入ります。</p>`
+    : `<hr style="border-color:rgba(255,255,255,0.15)">
     <h2>相手と交易</h2>
     <div class="sheet__row"><span>相手</span><div class="res-pick" data-row="other"></div></div>
     <div class="sheet__row"><span>渡す</span><div class="res-pick" data-row="pgive"></div></div>
     <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="pget"></div></div>
-    <button class="btn btn--accent" data-act="playerTrade">この内容で成立させる</button>
+    <button class="btn btn--accent" data-act="playerTrade">この内容で成立させる</button>`;
+  els.panel.innerHTML = `<h2>銀行・港と交易</h2>
+    <div class="sheet__row"><span>出す（${rate}枚で1枚）</span><div class="res-pick" data-row="give"></div></div>
+    <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="want"></div></div>
+    <button class="btn btn--accent" data-act="bank" ${p.resources[give] >= rate && give !== want ? '' : 'disabled'}>${rate}:1で交易する</button>
+    ${pTradeHtml}
     ${scenarioHtml}
     <button class="ghost-btn" data-act="cancel">やめる</button>`;
 
@@ -1721,9 +1798,11 @@ function renderTradeMenu() {
     b.appendChild(resIcon(r)); const s = document.createElement('span'); s.textContent = `×${p.resources[r]}`; b.appendChild(s);
   }, 'give');
   fillResPick(els.panel.querySelector('[data-row="want"]'), E.RESOURCES, (r) => r === want, (r, b) => b.appendChild(resIcon(r)), 'want');
-  fillOtherPick(els.panel.querySelector('[data-row="other"]'), other);
-  fillStepperRow(els.panel.querySelector('[data-row="pgive"]'), pGive, (r) => p.resources[r], 'pg');
-  fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => game.players[other].resources[r], 'pw');
+  if (!onlineRoom) {
+    fillOtherPick(els.panel.querySelector('[data-row="other"]'), other);
+    fillStepperRow(els.panel.querySelector('[data-row="pgive"]'), pGive, (r) => p.resources[r], 'pg');
+    fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => game.players[other].resources[r], 'pw');
+  }
   if (game.scenario === 'fishermen') {
     fillOtherPick(els.panel.querySelector('[data-row="fishOther"]'), fishOther, 'fishOther');
     fillResPick(els.panel.querySelector('[data-row="fishRes"]'), E.RESOURCES, (r) => r === fishRes, (r, b) => b.appendChild(resIcon(r)), 'fishRes');
@@ -2106,10 +2185,19 @@ function renderProgressKnightTargetPanel() {
 // ================================================================
 // 操作ボタン
 // ================================================================
-// CPU の手番・捨て札の最中は、盤やボタンを人が触っても動かない（CPUの手として誤って進んでしまうのを防ぐ）
+// CPU の手番・捨て札の最中は、盤やボタンを人が触っても動かない（CPUの手として誤って進んでしまうのを防ぐ）。
+// 通信対戦では「自分の席が今動いてよいか」に読み替える（ほかの人の番には押せない）
 function humansTurn() {
   if (!game) return false;
-  if (isOnlineGuest()) return false; // 通信のゲストはまだ操作できない（段階5で差し替える）
+  if (onlineRoom) {
+    const mySeat = mySeatIndex();
+    if (mySeat == null) return false; // 席に座っていない（ありえないが念のため）
+    if (game.phase === 'discard') return game.pendingDiscards.some((d) => d.player === mySeat);
+    if (game.phase === 'goldPick') return game.pendingGoldPicks.some((d) => d.player === mySeat);
+    if (game.phase === 'scienceBonus') return game.pendingScienceBonus.some((p) => p === mySeat);
+    if (game.phase === 'camelPlace') return game.camelDecider === mySeat;
+    return E.actingPlayer(game) === mySeat;
+  }
   if (game.phase === 'discard') return game.pendingDiscards.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'goldPick') return game.pendingGoldPicks.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'scienceBonus') return game.pendingScienceBonus.some((p) => !isCpuSeat(p));
@@ -2134,17 +2222,8 @@ function renderActionBar() {
   els.endTurnBtn.disabled = !buildable;
   els.endTurnBtn.textContent = inSBP ? 'パス' : '手番を終える';
 }
-els.diceBtn.addEventListener('click', () => {
-  if (rolling || game.phase !== 'roll' || !humansTurn()) return;
-  const finish = () => {
-    rolling = false;
-    act('rollDice', []);
-    ui = { mode: modeForPhase(), data: {} };
-    playEvents();
-    persistAndRender();
-  };
-  if (document.documentElement.classList.contains('motion-off')) { finish(); return; }
-  // ルーレットのように目を入れ替え、だんだん遅くして止める
+// ルーレットのように目を入れ替え、だんだん遅くして止めてから onDone を呼ぶ（振った本人・通信で見ている側の両方で使う）
+function spinDiceOnce(onDone) {
   rolling = true;
   els.diceBtn.disabled = true;
   const face = () => 1 + Math.floor(Math.random() * 6);
@@ -2155,9 +2234,21 @@ els.diceBtn.addEventListener('click', () => {
     els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
     beep(500 + Math.random() * 300, 0.03);
     delay *= 1.25;
-    if (delay < 260) setTimeout(spin, delay); else finish();
+    if (delay < 260) setTimeout(spin, delay); else { rolling = false; onDone(); }
   };
   spin();
+}
+els.diceBtn.addEventListener('click', () => {
+  if (rolling || game.phase !== 'roll' || !humansTurn()) return;
+  const finish = () => {
+    if (isOnlineGuest()) selfRolledPending = true; // 戻ってきた状態でもう一度回転させない
+    act('rollDice', []);
+    ui = { mode: modeForPhase(), data: {} };
+    playEvents();
+    persistAndRender();
+  };
+  if (document.documentElement.classList.contains('motion-off')) { finish(); return; }
+  spinDiceOnce(finish);
 });
 els.tradeBtn.addEventListener('click', () => { if (!humansTurn()) return; ui = { mode: 'tradeMenu', data: {} }; renderAll(); });
 els.devBtn.addEventListener('click', () => {
@@ -2308,5 +2399,17 @@ function renderAll() {
   renderBanner();
   renderActionBar();
   renderPanel();
+  announceMyTurn();
   scheduleCpu(); // CPUの番なら、ここで自動進行の予約をする（renderAllはすべての操作の後に呼ばれる）
+}
+
+// 通信対戦: 自分の番になった瞬間に1回だけ短い音を鳴らす（同じ番の間に何度renderAllが呼ばれても鳴らし直さない）
+let announcedTurnKey = null;
+function announceMyTurn() {
+  if (!onlineRoom || !game) { announcedTurnKey = null; return; }
+  const key = `${game.turnNumber}:${game.phase}:${E.actingPlayer(game)}`;
+  if (!humansTurn() || game.phase === 'discard') { announcedTurnKey = key; return; }
+  if (announcedTurnKey === key) return;
+  announcedTurnKey = key;
+  if (!document.hidden) SOUND.myTurn();
 }
