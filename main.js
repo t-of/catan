@@ -179,6 +179,10 @@ const SOUND = {
   },
   tradeDeclined: () => tone(ctx(), { freq: 180, type: 'sawtooth', peak: 0.14, attack: 0.001, decay: 0.1, slideTo: 120 }), // 通信対戦: 交換がことわられた（低い短いブザー）
   disconnected: () => tone(ctx(), { freq: 220, type: 'sine', peak: 0.12, attack: 0.02, decay: 0.3, slideTo: 140 }), // 通信対戦: だれかが切れた（低くやわらかく消える）
+  cutin: () => { // 大きな出来事の帯（最長交易路・騎士団・あと1点・蛮族の襲来など）: 短いファンファーレ
+    const c = ctx();
+    [700, 880, 1047].forEach((f, i) => tone(c, { freq: f, type: 'triangle', peak: 0.14, attack: 0.003, decay: i === 2 ? 0.22 : 0.1, delay: i * 0.07 }));
+  },
 };
 // SOUND.xxx() は音が出せない環境でも落ちないように、必ずこれ経由で呼ぶ。
 function playSound(name) {
@@ -282,6 +286,7 @@ const els = {
   tradeBtn: document.getElementById('tradeBtn'),
   devBtn: document.getElementById('devBtn'),
   endTurnBtn: document.getElementById('endTurnBtn'),
+  cutinLayer: document.getElementById('cutinLayer'),
 };
 
 const SCALE = 66; // 1マス単位(外接円半径1) → SVG座標のピクセル。illust.js の地形の絵は R=66 に合わせて置いてある。
@@ -362,6 +367,89 @@ let game = null;
 let robberMovedAt = 0, lastRobberHex = null; // 盗賊が動いた時刻（動いた直後に点滅させる）
 let pirateMovedAt = 0, lastPirateHex = null; // 海賊版（航海者版のみ使う）
 let diceHitAt = 0, diceHitHexes = []; // サイコロで当たったタイル（振った直後だけ光らせて暗くする）
+
+// ================================================================
+// 大きな出来事の帯（カットイン）。最長交易路・最大騎士力・あと1点・蛮族の襲来の勝ち負け。
+// playEvents() が呼ばれるたびに、前回の状態（cutinBase）と比べて見つける。engine.js は読むだけ。
+// 1台・CPU対局・通信対戦（ホスト・ゲストどちら）でも、持ち回っている game の中身で判断するので同じに動く。
+// ================================================================
+let cutinBase = null;
+let cutinQueue = [];
+let cutinShowing = false;
+function cutinSnapshot(g) {
+  return {
+    longestRoad: g.longestRoadPlayer,
+    largestArmy: g.largestArmyPlayer,
+    nearWin: new Set(g.players.map((_, i) => i).filter((i) => E.playerScore(g, i) >= E.winTargetFor(g, i) - 1)),
+    barbarianAttacked: !!g.barbarianAttacked,
+    logLen: g.log.length,
+  };
+}
+// 「つづきから」読み込み直後・通信の入り直し直後に、前からある状態を取り違えて帯を出さないよう、
+// その場の値で基準を作り直す（黙って揃えるだけで、ここでは何も出さない）。
+function resetCutinBaseline() {
+  cutinBase = game ? cutinSnapshot(game) : null;
+  cutinQueue = [];
+  cutinShowing = false;
+  els.cutinLayer.innerHTML = '';
+}
+function queueCutin(playerIdx, text) {
+  const color = playerIdx == null ? null : game.players[playerIdx].color;
+  cutinQueue.push({ text, color });
+  playSound('cutin');
+  showNextCutin();
+}
+function showNextCutin() {
+  if (cutinShowing || !cutinQueue.length) return;
+  cutinShowing = true;
+  const item = cutinQueue.shift();
+  const bar = document.createElement('div');
+  bar.className = 'cutin';
+  if (item.color) {
+    bar.style.setProperty('--cutin-edge', item.color);
+    bar.style.setProperty('--cutin-bg', I.tint(item.color, -0.55));
+  }
+  const text = document.createElement('div');
+  text.className = 'cutin__text';
+  text.textContent = item.text;
+  bar.appendChild(text);
+  els.cutinLayer.appendChild(bar);
+  const dismiss = () => {
+    if (!bar.isConnected) return;
+    bar.classList.remove('is-in'); bar.classList.add('is-out');
+    setTimeout(() => { bar.remove(); cutinShowing = false; showNextCutin(); }, 320);
+  };
+  bar.addEventListener('click', dismiss);
+  requestAnimationFrame(() => bar.classList.add('is-in'));
+  setTimeout(dismiss, 1800);
+}
+// 前回との差から、大きな出来事を見つけて帯に積む。cutinBase が無ければ（基準を作る前）何もしない
+function detectCutins() {
+  if (!cutinBase || !game) return;
+  const prev = cutinBase;
+  if (game.longestRoadPlayer !== prev.longestRoad && game.longestRoadPlayer != null) {
+    queueCutin(game.longestRoadPlayer, `${E.playerName(game, game.longestRoadPlayer)} が最長交易路を${prev.longestRoad != null ? '奪った' : '取った'}！`);
+  }
+  if (game.largestArmyPlayer !== prev.largestArmy && game.largestArmyPlayer != null) {
+    queueCutin(game.largestArmyPlayer, `${E.playerName(game, game.largestArmyPlayer)} が最大騎士力を${prev.largestArmy != null ? '奪った' : '取った'}！`);
+  }
+  game.players.forEach((p, i) => {
+    if (prev.nearWin.has(i) || game.winner === i) return;
+    if (E.playerScore(game, i) >= E.winTargetFor(game, i) - 1) {
+      prev.nearWin.add(i);
+      queueCutin(i, `${E.playerName(game, i)} が勝利まであと1点！`);
+    }
+  });
+  if (game.barbarianAttacked && !prev.barbarianAttacked) {
+    const added = game.log.slice(prev.logLen);
+    if (added.some((l) => l.includes('蛮族を退け'))) queueCutin(null, '蛮族の襲来！ 守りきった');
+    else if (added.some((l) => l.includes('蛮族に敗れ') || l.includes('都市が1つなくなった'))) queueCutin(null, '蛮族の襲来！ 都市が1つ奪われた');
+  }
+  prev.longestRoad = game.longestRoadPlayer;
+  prev.largestArmy = game.largestArmyPlayer;
+  prev.barbarianAttacked = !!game.barbarianAttacked;
+  prev.logLen = game.log.length;
+}
 
 // サイコロの合計に応じた盛り上げ（6・8はよく当たる目、7は盗賊、2・12は珍しい目）。
 // 「動き オフ」では揺れ・点滅はせず、色の変化だけに留める（音はそのまま鳴らす）。spinDiceOnce の最後と、
@@ -540,6 +628,7 @@ els.startBtn.addEventListener('click', () => {
   const expansions = allowedForCount && expansion !== 'none' ? [expansion] : [];
   const names = seats.map((s) => s.name);
   game = E.createGame(playerCount, Math.random, { expansions, scenario, names });
+  resetCutinBaseline();
   ui = { mode: modeForPhase(), data: {} };
   showGame();
   save('game', game);
@@ -601,6 +690,7 @@ els.continueBtn.addEventListener('click', () => {
   const saved = load('game', null);
   if (!saved || saved.winner != null) return;
   game = migrateGame(saved);
+  resetCutinBaseline();
   const savedSeats = load('gameSeats', null);
   seats = (savedSeats && savedSeats.length === game.playerCount) ? savedSeats : Array.from({ length: game.playerCount }, () => ({ type: 'human', level: 'normal' }));
   ui = { mode: modeForPhase(), data: {} };
@@ -755,7 +845,9 @@ function wireOnlineRoom() {
     // ホストは自分の手元のgameが正本なので、自分が配った状態のこだまは読み直さない（二重に音を鳴らさないため）。
     // 届くのは自分の席から見た状態（E.viewFor。自分の手札はそのまま、他人は枚数だけ）
     if (onlineRoom.isHost) return;
+    const firstState = game == null; // 入ってすぐ・入り直し直後の最初の1通だけ、基準を黙って作り直す
     try { game = JSON.parse(json); } catch { return; }
+    if (firstState) resetCutinBaseline();
     ui = { mode: modeForPhase(), data: {} };
     const skipSpin = selfRolledPending;
     selfRolledPending = false;
@@ -1011,6 +1103,7 @@ els.lobbyStartBtn.addEventListener('click', () => {
   const expansions = (exp && exp !== 'none' && ONLINE_EXPANSIONS.find((x) => x.id === exp && x.ready)) ? [exp] : [];
   const scenario = exp === 'traders-barbarians' && E.TB_SCENARIOS.includes(startSettings.scenario) ? startSettings.scenario : null;
   game = E.createGame(count, Math.random, { expansions, scenario, names });
+  resetCutinBaseline();
   ui = { mode: modeForPhase(), data: {} };
   onlineRoom.setMeta({ status: 'playing' });
   publishGame();
@@ -1034,7 +1127,7 @@ els.hostGoneBtn.addEventListener('click', async () => {
   // それまでの自分の画面は自分の席から見た状態（他人の手札は枚数だけ）だったので、続きを動かす前に
   // 全部入り（hostState。前のホストが最後に書いたもの）に入れ替える
   if (game) {
-    try { const full = await onlineRoom.fetchHostState(); if (full) game = JSON.parse(full); } catch { /* 読めなければ今の画面のまま続ける */ }
+    try { const full = await onlineRoom.fetchHostState(); if (full) { game = JSON.parse(full); resetCutinBaseline(); } } catch { /* 読めなければ今の画面のまま続ける */ }
   }
   onlineRoom.onAction(({ uid, name, args }) => hostApplyAction(uid, name, args));
   renderLobby();
@@ -1056,6 +1149,7 @@ homeBtn.addEventListener('click', () => {
   clearTimeout(cpuTimer); cpuTimer = null;
   closePanel();
   game = null;
+  resetCutinBaseline();
   els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true;
   ambientStop();
   if (onlineRoom) { leaveOnlineRoom(); showSetupView('mainSetupView'); }
@@ -1098,6 +1192,7 @@ function persistAndRender() {
 
 function playEvents() {
   if (!game) return;
+  detectCutins();
   // ホストは配り終える（persistAndRender）までevents/gainsを残す。ゲストと1台モードはここで使い切る
   const hostHold = onlineRoom && onlineRoom.isHost;
   const evts = hostHold ? game.events.slice() : game.events.splice(0, game.events.length);
@@ -2031,7 +2126,7 @@ function renderWinPanel() {
     closeRoom: async () => { await onlineRoom.close(); onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {}; prevOnlineStatus = null; try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ } refreshOnlineResume(); backToTitle(); },
     leaveRoom: async () => { await leaveOnlineRoom(); backToTitle(); },
     // 席はそのまま（同じ顔ぶれ）。つながっていない人・代打CPUは待合の見張り（hostSyncSeats）が自然に扱う
-    rematch: () => { game = null; onlineRoom.setMeta({ status: 'lobby' }); backToLobby(); },
+    rematch: () => { game = null; resetCutinBaseline(); onlineRoom.setMeta({ status: 'lobby' }); backToLobby(); },
     backToLobby,
   });
 }
