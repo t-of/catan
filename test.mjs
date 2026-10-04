@@ -1622,3 +1622,17 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   const stillOut = revertSubbedSeats(subbed, { u1: { online: false, name: 'あ' } });
   assert.deepEqual(stillOut[0], subbed[0]);
 });
+
+// ---- 通信対戦: 待合のQR（段階8。デコードしての一致確認はスクラッチで npm の jsQR を使って別途確認済み）----
+test('qr.js: 文字列ごとに違うSVGのQRを作る（roomQrSvgが使う部品）', async () => {
+  const qrcode = (await import('./qr.js')).default;
+  const linkA = 'https://t-of.github.io/catan/#room=ABCD';
+  const linkB = 'https://t-of.github.io/catan/#room=WXYZ';
+  const make = (text) => { const q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag(4, 8); };
+  const svgA = make(linkA);
+  const svgB = make(linkB);
+  assert.match(svgA, /^<svg /);
+  assert.match(svgA, /<\/svg>$/);
+  assert.notEqual(svgA, svgB); // 部屋コードが変われば中身(モジュール配置)も変わる
+  assert.equal(make(linkA), svgA); // 同じ文字列なら同じ見た目
+});

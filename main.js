@@ -5,7 +5,7 @@ import * as E from './engine.js';
 import * as I from './illust.js';
 import * as CPU from './cpu.js';
 import {
-  createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash,
+  createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash, roomQrSvg,
   GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart, subSeat, freeSeat, revertSubbedSeats,
 } from './online.js';
 
@@ -102,6 +102,7 @@ const els = {
   onlineLobbyView: document.getElementById('onlineLobbyView'),
   lobbyCode: document.getElementById('lobbyCode'),
   lobbyInviteBtn: document.getElementById('lobbyInviteBtn'),
+  lobbyQr: document.getElementById('lobbyQr'),
   lobbyCountRow: document.getElementById('lobbyCountRow'),
   lobbyCountPicker: document.getElementById('lobbyCountPicker'),
   lobbySeats: document.getElementById('lobbySeats'),
@@ -641,6 +642,10 @@ function resolveTradeOffer(accept) {
 function renderLobby() {
   if (!onlineRoom) return;
   els.lobbyCode.textContent = onlineRoom.code;
+  if (els.lobbyQr.dataset.code !== onlineRoom.code) {
+    els.lobbyQr.innerHTML = roomQrSvg(onlineRoom.code);
+    els.lobbyQr.dataset.code = onlineRoom.code;
+  }
   if (!onlineMeta) return;
   const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
   const lobbySeatsArr = parseSeats(onlineMeta.seats, count);

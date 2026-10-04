@@ -137,6 +137,15 @@ button { font: inherit; color: inherit; }
   letter-spacing: 6px; text-align: center; color: var(--accent-hi);
 }
 
+/* ---- 通信対戦（QRコード。たためる。summary を btn に見せる） ---- */
+.qr-details summary { list-style: none; cursor: pointer; }
+.qr-details summary::-webkit-details-marker { display: none; }
+.qr-code {
+  width: min(220px, 70vw); margin: 8px auto 0; padding: 10px;
+  background: #fff; border-radius: 12px; display: flex; justify-content: center;
+}
+.qr-code svg { width: 100%; height: 100%; display: block; }
+
 /* ---- 席ごとの人／CPU選び ---- */
 .seats { display: flex; flex-direction: column; gap: 6px; }
 .seat-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

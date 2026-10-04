@@ -2,6 +2,7 @@
 // 部屋のしくみ（作る・入る・顔ぶれ・状態の送受信）は room.js（正本は本部の online-kit）。
 // ここは catan の待合の形（settings・seats）を組み立てるだけ。画面は main.js が持つ。
 import { createRoom, joinRoom, isValidCode, sanitizeName as roomSanitizeName, roomLinkFor, roomCodeFromHash } from './room.js';
+import qrcode from './qr.js';
 
 const GAME = 'catan';
 
@@ -69,7 +70,15 @@ function revertSubbedSeats(seats, members) {
     : s));
 }
 
+// 部屋のリンクをQRにしたSVG文字列（待合の「QRコードで招待する」）
+function roomQrSvg(code) {
+  const qr = qrcode(0, 'M'); // typeNumber 0 = 文字数に合わせて自動で選ぶ
+  qr.addData(roomLinkFor(code));
+  qr.make();
+  return qr.createSvgTag(4, 8);
+}
+
 export {
-  createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash,
+  createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash, roomQrSvg,
   GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart, subSeat, freeSeat, revertSubbedSeats,
 };
