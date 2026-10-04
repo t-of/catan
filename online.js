@@ -31,7 +31,7 @@ const ONLINE_EXPANSIONS = [
   { id: 'cities-knights', name: '都市と騎士', ready: true },
   { id: 'traders-barbarians', name: '交易と略奪', ready: true },
   { id: 'soccer', name: 'サッカー熱', ready: false },
-  { id: 'explorers-pirates', name: '探検家と海賊', ready: false },
+  { id: 'explorers-pirates', name: '探検家と海賊', ready: true },
 ];
 
 // members（全員）のうち座っていない人を、空いている人の席に座らせる（ホストだけが呼ぶ）

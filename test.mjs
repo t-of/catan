@@ -1669,16 +1669,38 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   assert.deepEqual(stillOut[0], subbed[0]);
 });
 
-test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」「航海者版」「都市と騎士」「交易と略奪」がready（段階9〜9-4）', async () => {
+test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」「航海者版」「都市と騎士」「交易と略奪」「探検家と海賊」がready（段階9〜9-5）', async () => {
   const { canStart, ONLINE_EXPANSIONS } = await import('./online.js');
   const seats6 = Array.from({ length: 6 }, (_, i) => (i < 2
     ? { type: 'human', uid: `u${i}` }
     : { type: 'cpu', level: 'normal' }));
   assert.equal(canStart(seats6), true);
   assert.equal(canStart(seats6.slice(0, 5)), true);
-  const readyIds = ['none', 'seafarers', 'cities-knights', 'traders-barbarians'];
+  const readyIds = ['none', 'seafarers', 'cities-knights', 'traders-barbarians', 'explorers-pirates'];
   assert.deepEqual(ONLINE_EXPANSIONS.filter((x) => x.ready).map((x) => x.id), readyIds);
   assert.equal(ONLINE_EXPANSIONS.filter((x) => !readyIds.includes(x.id)).every((x) => x.ready === false), true);
+});
+
+// 通信対戦9-5: 探検家と海賊を開ける。船を置く・動かす(buildShip/moveShip)は航海者版と同じengine関数で、
+// どちらもcurrentPlayer(game)だけを見て動くので、既存のONLINE_TURN_ACTIONS（9-2で船を足した時点）の
+// 確かめがそのまま効く。霧のマスを見つける処理(revealFogAt)が船の操作に相乗りしていることも確かめる
+test('探検家と海賊: buildShipはcurrentPlayerにしか当たらず、船を置くと霧のマスが開ける（手番の確かめはホスト側の責任）', () => {
+  const g = E.createGame(4, Math.random, { expansions: ['explorers-pirates'] });
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 1;
+  g.players.forEach((p) => { p.resources = { wood: 1, brick: 1, sheep: 1, wheat: 0, ore: 0 }; });
+  assert.equal(E.currentPlayer(g), 1);
+  const fogHex = g.board.hexes.find((h) => h.fog);
+  const edge = g.board.edges.find((e) => e.hexIds.includes(fogHex.id)
+    && e.hexIds.some((h) => g.board.hexes[h].terrain === 'water')
+    && !g.board.hexes[g.board.pirateHex].edgeIds.includes(e.id));
+  assert.ok(edge, '霧のマスに隣接する海の辺が見つからない');
+  g.board.vertices[edge.v1].building = { owner: 1, type: 'settlement' }; // 自分の開拓地とつながった体にする
+  g.players[1].settlements.push(edge.v1);
+  assert.ok(E.buildShip(g, edge.id)); // 手番(1)の船として置かれる
+  assert.equal(g.players[1].ships.length, 1);
+  assert.equal(g.players[0].ships.length, 0); // 手番でない0の船にはならない
+  assert.equal(fogHex.fog, false); // 船を置いた人の霧が開く
+  assert.equal(g.players[1].epRevealed, 1);
 });
 
 // 通信対戦9-4: 交易と略奪を開ける。漁師・川・隊商・蛮族の襲撃の操作はすべてengineがcurrentPlayer(game)で

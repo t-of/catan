@@ -589,7 +589,7 @@ const ONLINE_TURN_ACTIONS = new Set([
   'bankTrade', 'moveRobber', 'endTurn', 'passSpecialBuild',
   'setupPlaceSettlement', 'setupPlaceRoad',
   'playYearOfPlenty', 'playMonopoly', 'playRoadBuilding',
-  'buildShip', 'moveShip', // 航海者版
+  'buildShip', 'moveShip', // 航海者版・探検家と海賊（同じengine関数を使う）
   'improveCity', 'buildWall', 'buildKnight', 'activateKnight', 'upgradeKnight',
   'moveKnight', 'expelKnight', 'chaseRobber', 'playProgressCard', 'tradeCommodity', // 都市と騎士
   'fishRobberAway', 'fishSteal', 'fishResource', 'fishRoad', 'fishDevCard', 'giveOldBoot', // 交易と略奪・漁師
