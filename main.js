@@ -381,8 +381,7 @@ function cutinSnapshot(g) {
     longestRoad: g.longestRoadPlayer,
     largestArmy: g.largestArmyPlayer,
     nearWin: new Set(g.players.map((_, i) => i).filter((i) => E.playerScore(g, i) >= E.winTargetFor(g, i) - 1)),
-    barbarianAttacked: !!g.barbarianAttacked,
-    logLen: g.log.length,
+    lastLog: g.log[g.log.length - 1],
   };
 }
 // 「つづきから」読み込み直後・通信の入り直し直後に、前からある状態を取り違えて帯を出さないよう、
@@ -440,15 +439,18 @@ function detectCutins() {
       queueCutin(i, `${E.playerName(game, i)} が勝利まであと1点！`);
     }
   });
-  if (game.barbarianAttacked && !prev.barbarianAttacked) {
-    const added = game.log.slice(prev.logLen);
+  // 都市と騎士の蛮族の襲来は毎回ログに残るので、その差で見る（barbarianAttacked は1回目で true のままになる）。
+  // 交易と略奪の「蛮族を退けた」と混ざらないよう、都市と騎士（商品の銀行がある）に限る。
+  const seen = game.log.lastIndexOf(prev.lastLog); // 見つからなければ（取り違えを避けて）見ない
+  if (game.bank && game.bank.commodities && seen >= 0) {
+    // ログは200件で先頭が消えるので、件数でなく「前に見た最後の1行」より後を新しい分とする
+    const added = game.log.slice(seen + 1);
     if (added.some((l) => l.includes('蛮族を退け'))) queueCutin(null, '蛮族の襲来！ 守りきった');
     else if (added.some((l) => l.includes('蛮族に敗れ') || l.includes('都市が1つなくなった'))) queueCutin(null, '蛮族の襲来！ 都市が1つ奪われた');
   }
   prev.longestRoad = game.longestRoadPlayer;
   prev.largestArmy = game.largestArmyPlayer;
-  prev.barbarianAttacked = !!game.barbarianAttacked;
-  prev.logLen = game.log.length;
+  prev.lastLog = game.log[game.log.length - 1];
 }
 
 // サイコロの合計に応じた盛り上げ（6・8はよく当たる目、7は盗賊、2・12は珍しい目）。
