@@ -1595,3 +1595,30 @@ test('探検家と海賊×5〜6人: CPUだけで5人・6人、数局きちんと
     }
   }
 });
+
+// ---- 通信対戦（みんなのスマホで）: 待合の席を組み立てる純粋関数（online.js）----
+test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し・部屋を出る 段階7）', async () => {
+  const { subSeat, freeSeat, revertSubbedSeats } = await import('./online.js');
+  const seats = [
+    { type: 'human', uid: 'u1', name: 'あ' },
+    { type: 'cpu', level: 'normal' },
+    { type: 'human', uid: 'u2', name: 'い' },
+  ];
+
+  // 切れた・抜けた人の席をCPUに代わってもらう。持ち主(uid)は覚えておく
+  const subbed = subSeat(seats, 0);
+  assert.deepEqual(subbed[0], { type: 'cpu', level: 'normal', subbed: true, uid: 'u1', name: 'あ' });
+  assert.deepEqual(subbed[1], seats[1]); // ほかの席はそのまま
+  assert.equal(subSeat(seats, 1), seats); // 人でない席は変えない
+
+  // 待合では席を空ける
+  const freed = freeSeat(seats, 2);
+  assert.deepEqual(freed[2], { type: 'human', uid: null, name: '' });
+  assert.equal(freeSeat(seats, 1), seats); // CPU席は変えない
+
+  // 本人がつながり直していたら人に戻す。オフラインのままなら触らない
+  const back = revertSubbedSeats(subbed, { u1: { online: true, name: 'あ' } });
+  assert.deepEqual(back[0], { type: 'human', uid: 'u1', name: 'あ' });
+  const stillOut = revertSubbedSeats(subbed, { u1: { online: false, name: 'あ' } });
+  assert.deepEqual(stillOut[0], subbed[0]);
+});

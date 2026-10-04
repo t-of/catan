@@ -44,7 +44,32 @@ function canStart(seats) {
   return humanCount >= 2 && seats.every((s) => s.type === 'cpu' || (s.type === 'human' && s.uid));
 }
 
+// 席 i を「CPUに代わってもらう」。持ち主(uid)は覚えておき、本人が戻ったら revertSubbedSeats で人に戻す
+function subSeat(seats, i) {
+  const seat = seats[i];
+  if (!seat || seat.type !== 'human' || !seat.uid) return seats;
+  const next = seats.map((s) => ({ ...s }));
+  next[i] = { type: 'cpu', level: 'normal', subbed: true, uid: seat.uid, name: seat.name || '' };
+  return next;
+}
+
+// 待合で席を空ける（対局中はsubSeatを使う。自分から抜けたときなど）
+function freeSeat(seats, i) {
+  const seat = seats[i];
+  if (!seat || seat.type !== 'human') return seats;
+  const next = seats.map((s) => ({ ...s }));
+  next[i] = { type: 'human', uid: null, name: '' };
+  return next;
+}
+
+// CPUに代わってもらっていた席の持ち主がつながり直していたら、人の席に戻す
+function revertSubbedSeats(seats, members) {
+  return seats.map((s) => (s.type === 'cpu' && s.subbed && s.uid && members[s.uid] && members[s.uid].online
+    ? { type: 'human', uid: s.uid, name: s.name || members[s.uid].name || '' }
+    : s));
+}
+
 export {
   createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash,
-  GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart,
+  GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart, subSeat, freeSeat, revertSubbedSeats,
 };
