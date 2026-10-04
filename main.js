@@ -43,6 +43,22 @@ if ('serviceWorker' in navigator) {
 function setAudioSession(soundOn) {
   try { if (navigator.audioSession) navigator.audioSession.type = soundOn ? 'playback' : 'auto'; } catch { /* 対応していない */ }
 }
+// 音のオン・オフ。既定はオン。els（ゲーム画面）はこのあとで定義されるため、
+// 読み込み時はボタンの見た目だけ合わせ、環境音の起動はクリック時と showGame() 側に任せる。
+const soundBtn = document.getElementById('soundBtn');
+let soundOn = load('sound', true);
+soundBtn.setAttribute('aria-pressed', String(soundOn));
+soundBtn.textContent = soundOn ? '音 オン' : '音 オフ';
+setAudioSession(soundOn);
+function setSound(on) {
+  soundOn = on;
+  soundBtn.setAttribute('aria-pressed', String(on));
+  soundBtn.textContent = on ? '音 オン' : '音 オフ';
+  save('sound', on);
+  setAudioSession(on);
+  if (!on) ambientStop(); else if (!els.gamePanel.hidden) ambientStart();
+}
+soundBtn.addEventListener('click', () => setSound(soundBtn.getAttribute('aria-pressed') !== 'true'));
 let audioCtx = null;
 function ctx() {
   if (!audioCtx) { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); setAudioSession(true); }
@@ -165,12 +181,13 @@ const SOUND = {
 };
 // SOUND.xxx() は音が出せない環境でも落ちないように、必ずこれ経由で呼ぶ。
 function playSound(name) {
+  if (!soundOn) return;
   try { if (SOUND[name]) SOUND[name](); } catch { /* 音が出せなくても遊べる */ }
 }
 // 波・風の環境音（ゲーム画面にいる間だけ、小さい音量でループ）。タブが隠れたら止める。
 let ambient = null;
 function ambientStart() {
-  if (ambient || document.hidden) return;
+  if (ambient || document.hidden || !soundOn) return;
   try {
     const c = ctx();
     const waveSrc = c.createBufferSource();
