@@ -197,25 +197,36 @@ function ambientStart() {
     const c = ctx();
     const waveSrc = c.createBufferSource();
     waveSrc.buffer = noiseBuffer(c); waveSrc.loop = true;
-    const waveFilter = c.createBiquadFilter(); waveFilter.type = 'lowpass'; waveFilter.frequency.value = 500;
-    const waveGain = c.createGain(); waveGain.gain.value = 0.02;
-    const lfo = c.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.13; // 波の満ち引き
-    const lfoGain = c.createGain(); lfoGain.gain.value = 0.012;
-    lfo.connect(lfoGain).connect(waveGain.gain);
+    const waveFilter = c.createBiquadFilter(); waveFilter.type = 'lowpass'; waveFilter.frequency.value = 300;
+    const waveGain = c.createGain(); waveGain.gain.value = 0.002;
     waveSrc.connect(waveFilter).connect(waveGain).connect(c.destination);
+    // 波 1 つ: 寄せるとき大きく明るく、引くときこもって消える。間隔は毎回ばらつかせる。
+    const swell = () => {
+      const t = c.currentTime, rise = 1.2 + Math.random(), fall = 2.5 + Math.random() * 2;
+      const g = waveGain.gain, f = waveFilter.frequency;
+      g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(0.03 + Math.random() * 0.02, t + rise);
+      g.setTargetAtTime(0.002, t + rise, fall / 3);
+      f.cancelScheduledValues(t); f.setValueAtTime(f.value, t);
+      f.linearRampToValueAtTime(1000 + Math.random() * 600, t + rise);
+      f.setTargetAtTime(300, t + rise, fall / 3);
+      if (ambient) ambient.timer = setTimeout(swell, (rise + fall + Math.random() * 2) * 1000);
+    };
 
     const windSrc = c.createBufferSource();
     windSrc.buffer = noiseBuffer(c); windSrc.loop = true;
     const windFilter = c.createBiquadFilter(); windFilter.type = 'bandpass'; windFilter.frequency.value = 900; windFilter.Q.value = 0.5;
-    const windGain = c.createGain(); windGain.gain.value = 0.01;
+    const windGain = c.createGain(); windGain.gain.value = 0.004;
     windSrc.connect(windFilter).connect(windGain).connect(c.destination);
 
-    waveSrc.start(); lfo.start(); windSrc.start();
-    ambient = { nodes: [waveSrc, lfo, windSrc] };
+    waveSrc.start(); windSrc.start();
+    ambient = { nodes: [waveSrc, windSrc], timer: 0 };
+    swell();
   } catch { /* 音が出せなくても遊べる */ }
 }
 function ambientStop() {
   if (!ambient) return;
+  clearTimeout(ambient.timer);
   ambient.nodes.forEach((n) => { try { n.stop(); } catch { /* 既に止まっている */ } });
   ambient = null;
 }
