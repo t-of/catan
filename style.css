@@ -111,6 +111,20 @@ button { font: inherit; color: inherit; }
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 0 80px rgba(0, 0, 0, 0.35);
 }
 .setup__sea { position: absolute; inset: 0; z-index: 0; }
+/* 待合（onlineLobbyView）は縦360×640にスクロールなしで収めたいので、背景イラストとロゴを隠す */
+.setup--compact { justify-content: flex-start; padding: 10px 12px 12px; gap: 6px; }
+.setup--compact .setup__sea,
+.setup--compact .setup__board,
+.setup--compact .setup__logo,
+.setup--compact .setup__lead { display: none; }
+/* 縦360×640に収めるため、待合の中の余白・文字・ボタンの高さも少し詰める */
+.setup--compact #onlineLobbyView { gap: 6px; }
+.setup--compact #onlineLobbyView h2 { margin: 0; }
+.setup--compact .room-code { font-size: 26px; letter-spacing: 4px; }
+.setup--compact #lobbySeats { gap: 4px; }
+.setup--compact .btn { min-height: 40px; }
+.setup--compact #lobbyStartBtn { min-height: 44px; font-size: 15px; }
+.setup--compact .seat-row__level .btn { min-height: 28px; }
 .setup__logo {
   position: relative; z-index: 1;
   font-family: var(--serif); font-size: clamp(32px, 7vw, 52px); font-weight: 700; color: var(--accent-hi);

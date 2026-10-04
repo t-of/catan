@@ -220,6 +220,7 @@ let onlineName = load('onlineName', '');
 let onlinePendingCode = null;   // リンク（#room=）から開いたときの、まだ入っていないコード
 let onlineSeatUids = [];        // meta.seats の uid だけを抜いた列（人の席はuid、CPUの席はnull）。自分の席を引くのに使う
 let selfRolledPending = false;  // 通信: 自分がサイコロを振った直後、戻ってきた状態でもう一度回転させないための印
+let prevOnlineStatus = null;    // 直前の meta.status（'lobby'→'playing' に変わった瞬間だけ自動で対局画面に進むため）
 // 通信対戦: 切断の見張り。uid → 切れたと分かった時刻（オンラインに戻ったら消す）
 const OFFLINE_WAIT_MS = 20000;
 let offlineSince = {};
@@ -434,6 +435,8 @@ showContinue();
 // ================================================================
 function showSetupView(id) {
   ['mainSetupView', 'onlineNameView', 'onlineChoiceView', 'onlineLobbyView'].forEach((v) => { els[v].hidden = v !== id; });
+  // 待合は縦360×640でスクロールなしに収めたいので、タイトルの背景イラスト・ロゴ文字を隠す
+  els.setupPanel.classList.toggle('setup--compact', id === 'onlineLobbyView');
 }
 function refreshOnlineResume() {
   const saved = load('onlineRoom', null);
@@ -468,7 +471,7 @@ async function leaveOnlineRoom() {
   // ゲスト自身が抜けるときは、席を片付けてもらうようホストにお願いしてから抜ける（2-5「自分から抜けた」）
   if (!onlineRoom.isHost) { try { await onlineRoom.send('leaveSeat', {}); } catch { /* 無視 */ } }
   try { await onlineRoom.leave(); } catch { /* 無視 */ }
-  onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {};
+  onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {}; prevOnlineStatus = null;
   els.hostGoneBar.hidden = true;
   try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ }
   refreshOnlineResume();
@@ -541,7 +544,12 @@ function wireOnlineRoom() {
   onlineRoom.onMeta((meta) => {
     onlineMeta = meta;
     applySeatsFromMeta(meta);
-    if (meta && meta.status === 'playing' && els.gamePanel.hidden) showGame();
+    // 'lobby'→'playing' に変わった瞬間（新しい対局が始まった・途中から入った）だけ対局画面に進む。
+    // 「もう一度」のあと status はずっと 'playing' のままではなく一度 'lobby' を経由するので、
+    // 終了後にゲストが自分で待合へ戻っても（gamePanel.hiddenがtrueでも）ここで押し戻されない
+    const prevStatus = prevOnlineStatus;
+    prevOnlineStatus = meta && meta.status;
+    if (meta && meta.status === 'playing' && prevStatus !== 'playing') showGame();
     renderLobby();
     renderHostGoneBar();
   });
@@ -1755,16 +1763,22 @@ function renderPanel() {
 }
 
 function renderWinPanel() {
-  // 通信対戦: 終わったらホストが部屋ごと消す（2-5「部屋の後片付け」）。ゲストは部屋を出るだけ
+  // 通信対戦: ホストは「もう一度」で部屋を消さず待合へ戻せる。「部屋を片付けてタイトルへ」も残す。
+  // ゲストは「待合に戻る」（ホストがはじめるのを待てる）か「部屋を出る」（2-5「部屋の後片付け」）
   const onlineBtnHtml = !onlineRoom ? '<button class="btn btn--accent" data-act="close">とじる</button>'
-    : onlineRoom.isHost ? '<button class="btn btn--accent" data-act="closeRoom">部屋を片付けてタイトルへ</button>'
-    : '<button class="btn btn--accent" data-act="leaveRoom">部屋を出る</button>';
+    : onlineRoom.isHost
+      ? '<div class="sheet__row"><button class="btn btn--accent" data-act="rematch">もう一度（同じ顔ぶれ）</button><button class="ghost-btn" data-act="closeRoom">部屋を片付けてタイトルへ</button></div>'
+      : '<div class="sheet__row"><button class="btn btn--accent" data-act="backToLobby">待合に戻る</button><button class="ghost-btn" data-act="leaveRoom">部屋を出る</button></div>';
   els.panel.innerHTML = `<h2>${game.players[game.winner].name}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>${onlineBtnHtml}`;
   const backToTitle = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; showSetupView('mainSetupView'); };
+  const backToLobby = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; showSetupView('onlineLobbyView'); renderLobby(); };
   bindPanel({
     close: () => { closePanel(); },
-    closeRoom: async () => { await onlineRoom.close(); onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {}; try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ } refreshOnlineResume(); backToTitle(); },
+    closeRoom: async () => { await onlineRoom.close(); onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {}; prevOnlineStatus = null; try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ } refreshOnlineResume(); backToTitle(); },
     leaveRoom: async () => { await leaveOnlineRoom(); backToTitle(); },
+    // 席はそのまま（同じ顔ぶれ）。つながっていない人・代打CPUは待合の見張り（hostSyncSeats）が自然に扱う
+    rematch: () => { game = null; onlineRoom.setMeta({ status: 'lobby' }); backToLobby(); },
+    backToLobby,
   });
 }
 
