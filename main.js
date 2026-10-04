@@ -67,6 +67,8 @@ const SOUND = {
   win: () => { beep(660, 0.15); setTimeout(() => beep(880, 0.25), 140); },
   shortage: () => beep(180, 0.08),
   myTurn: () => beep(700, 0.1), // 通信対戦: 自分の番になった（手番の音より少し高く）
+  tradeOffered: () => { beep(500, 0.05); setTimeout(() => beep(500, 0.05), 100); }, // 通信対戦: 交換を申し込まれた（軽いノック2回）
+  tradeDeclined: () => beep(200, 0.08), // 通信対戦: 交換がことわられた（低い短い1音）
 };
 
 // ---- DOM ----
@@ -128,6 +130,11 @@ const els = {
 
 const SCALE = 66; // 1マス単位(外接円半径1) → SVG座標のピクセル。illust.js の地形の絵は R=66 に合わせて置いてある。
 const RES_LABEL = { wood: '木', brick: '土', sheep: '羊', wheat: '麦', ore: '鉄' };
+// 資源の内訳を「木1・麦1」のような短い文にする（通信対戦の交換の申し込みの表示用）
+function resSummary(obj) {
+  const s = Object.entries(obj).filter(([, n]) => n > 0).map(([r, n]) => `${RES_LABEL[r]}${n}`).join('・');
+  return s || 'なし';
+}
 const RES_COLOR = { wood: '#3f8a4a', brick: '#c0643a', sheep: '#8cc063', wheat: '#e0b440', ore: '#8a92a3' };
 const PORT_TERRAIN = { wood: 'forest', brick: 'hills', sheep: 'pasture', wheat: 'field', ore: 'mountains' };
 
@@ -501,24 +508,64 @@ const ONLINE_TURN_ACTIONS = new Set([
 ]);
 // 手番と関係なく、自分の分を片付ける操作（席番号は信用せず、ホストが送り主から引いた席で上書きする）
 const ONLINE_SELF_ACTIONS = new Set(['discardCards', 'pickGold', 'pickScienceBonus', 'submitCamelBid']);
+// 交換の申し込み・返事・とりさげ（段階6）。送り主の確かめ方が上の2つと違うので別扱い（2-2の表の「交換の返事」）
+const ONLINE_TRADE_ACTIONS = new Set(['offerTrade', 'answerTrade', 'withdrawTrade']);
 function hostApplyAction(uid, name, rawArgs) {
   if (!game || game.winner != null) return;
   const seat = onlineSeatUids.indexOf(uid);
   if (seat === -1) return; // 席の持ち主でない（表の「どれでもない」）
   const args = Array.isArray(rawArgs) ? rawArgs.slice() : [];
-  if (ONLINE_TURN_ACTIONS.has(name)) {
-    if (seat !== E.actingPlayer(game)) return; // 自分の番でないのに押した／なりすまし
-  } else if (ONLINE_SELF_ACTIONS.has(name)) {
-    args[0] = seat; // 自分の席番号は送らせない。ホストが入れる
+  if (ONLINE_TRADE_ACTIONS.has(name)) {
+    applyTradeAction(seat, name, args);
   } else {
-    return; // 表にない操作は捨てる
+    if (ONLINE_TURN_ACTIONS.has(name)) {
+      if (seat !== E.actingPlayer(game)) return; // 自分の番でないのに押した／なりすまし
+    } else if (ONLINE_SELF_ACTIONS.has(name)) {
+      args[0] = seat; // 自分の席番号は送らせない。ホストが入れる
+    } else {
+      return; // 表にない操作は捨てる
+    }
+    if (typeof E[name] !== 'function') return;
+    const ok = E[name](game, ...args);
+    if (ok === false || ok == null) return; // engine 自身が断った（資源が足りない、置けない場所など）
+    if (game.tradeOffer) game.tradeOffer = null; // 手番の人がほかの操作をしたら、申し込みは自動で消える
   }
-  if (typeof E[name] !== 'function') return;
-  const ok = E[name](game, ...args);
-  if (ok === false || ok == null) return; // engine 自身が断った（資源が足りない、置けない場所など）
   ui = { mode: modeForPhase(), data: {} };
   playEvents();
   persistAndRender();
+}
+
+// 交換の申し込み・受ける・ことわる・とりさげ。tradeOfferはengineの外、catan側の追加項目（ホストだけが書き換える）
+function applyTradeAction(seat, name, args) {
+  if (name === 'offerTrade') {
+    if (seat !== E.actingPlayer(game) || game.phase !== 'main' || game.tradeOffer) return; // 1度に1件・手番の人だけ
+    const [to, give, get] = args;
+    if (typeof to !== 'number' || to === seat || !game.players[to] || !give || !get) return;
+    game.tradeOffer = { id: Date.now(), from: seat, to, give, get };
+    game.log.push(`${game.players[seat].name}が${game.players[to].name}に交易を申し込みました`);
+    game.events.push('tradeOffered');
+    if (isCpuSeat(to)) resolveTradeOffer(CPU.acceptTrade(game, to, give, get, seatLevel(to)));
+  } else if (name === 'withdrawTrade') {
+    if (game.tradeOffer && seat === game.tradeOffer.from) game.tradeOffer = null;
+  } else if (name === 'answerTrade') {
+    if (game.tradeOffer && seat === game.tradeOffer.to) resolveTradeOffer(!!args[0]);
+  }
+}
+// 申し込みの返事を当てる。受けるときは、その時点でも手番・資源が足りるかengineが確かめる
+function resolveTradeOffer(accept) {
+  const offer = game.tradeOffer;
+  if (!offer) return;
+  if (accept && E.currentPlayer(game) === offer.from && E.playerTrade(game, offer.to, offer.give, offer.get)) {
+    game.log.push(`${game.players[offer.to].name}が交易を受けました`);
+    game.events.push('trade');
+  } else if (accept) {
+    game.log.push(`${game.players[offer.to].name}との交易は成立しませんでした`); // 受けた時点で資源が足りなかった等
+    game.events.push('tradeDeclined');
+  } else {
+    game.log.push(`${game.players[offer.to].name}は交易を断りました`);
+    game.events.push('tradeDeclined');
+  }
+  game.tradeOffer = null;
 }
 
 function renderLobby() {
@@ -687,6 +734,7 @@ function modeForPhase() {
 // 通信のゲストは room.send でホストにお願いし、戻ってくる状態（onState）を待つ。
 function act(name, args) {
   if (isOnlineGuest()) { onlineRoom.send(name, args || []); return true; }
+  if (onlineRoom && ONLINE_TRADE_ACTIONS.has(name)) { applyTradeAction(mySeatIndex(), name, args || []); return true; }
   return E[name](game, ...(args || []));
 }
 
@@ -1401,6 +1449,9 @@ function renderBanner() {
       if (mySeat === to) main += ` ${game.players[from].name}から${RES_LABEL[res]}を1枚奪った。`;
       else if (mySeat === from) main += ` ${game.players[to].name}に${RES_LABEL[res]}を1枚取られた。`;
     }
+    if (game.tradeOffer && mySeat !== game.tradeOffer.from && mySeat !== game.tradeOffer.to) {
+      main += ` ${game.players[game.tradeOffer.from].name}が${game.players[game.tradeOffer.to].name}に交換を申し込み中。`;
+    }
   }
   if (ui.mode === 'buildRoad') hint = '道を置く場所をタップ。';
   else if (ui.mode === 'buildSettlement') hint = '開拓地を置く場所をタップ。';
@@ -1540,6 +1591,10 @@ function openPanel() { els.panelOverlay.hidden = false; }
 function closePanel() { els.panelOverlay.hidden = true; els.panel.innerHTML = ''; }
 
 function renderPanel() {
+  // 通信対戦: 自分あてに交換が申し込まれていたら、ほかの窓より先にこれを出す（自分の番でなくても出る）
+  if (onlineRoom && game.tradeOffer && mySeatIndex() === game.tradeOffer.to) {
+    openPanel(); renderTradeAnswerPanel(game.tradeOffer); return;
+  }
   // 捨て札はCPUの分を先に片付けてよいので、人が窓で捨てるのは「人の席でまだ残っている分」だけ。
   // 通信対戦では「自分の席の分」だけを出す（ほかの人は各自の端末で同時に捨てる）
   if (ui.mode === 'discard' && game.phase === 'discard') {
@@ -1598,6 +1653,20 @@ function renderWinPanel() {
   els.panel.innerHTML = `<h2>${game.players[game.winner].name}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>
     <button class="btn btn--accent" data-act="close">とじる</button>`;
   bindPanel({ close: () => { closePanel(); } });
+}
+
+// 通信対戦: 自分あてに来た交換の申し込みに答える窓（受ける／ことわる）
+function renderTradeAnswerPanel(offer) {
+  els.panel.innerHTML = `<h2>交換の申し込み</h2>
+    <p>${game.players[offer.from].name}から: ${resSummary(offer.give)} → ${resSummary(offer.get)}。受ける？</p>
+    <div class="sheet__row">
+      <button class="btn btn--accent" data-act="accept">受ける</button>
+      <button class="ghost-btn" data-act="decline">ことわる</button>
+    </div>`;
+  bindPanel({
+    accept: () => { act('answerTrade', [true]); playEvents(); persistAndRender(); },
+    decline: () => { act('answerTrade', [false]); playEvents(); persistAndRender(); },
+  });
 }
 
 function bindPanel(actions) {
@@ -1777,9 +1846,20 @@ function renderTradeMenu() {
       <h2>探検家と海賊（霧のマスを見つけた数 ${p.epRevealed || 0}/3${game.epMissionWinner === idx ? '・探検ミッション達成+1点' : ''}）</h2>`;
   }
 
-  // 通信対戦では相手との交易（1件ずつ申し込んで返事を待つ）は段階6。今回はいきなり成立させる窓は出さない
+  // 通信対戦: 申し込み中はその内容ととりさげるボタンだけ出す。なければ相手・渡す・もらうを選んで申し込む窓
+  const myOffer = onlineRoom && game.tradeOffer && game.tradeOffer.from === idx ? game.tradeOffer : null;
   const pTradeHtml = onlineRoom
-    ? `<hr style="border-color:rgba(255,255,255,0.15)"><p style="opacity:.8">相手との交易は次の更新で入ります。</p>`
+    ? (myOffer
+      ? `<hr style="border-color:rgba(255,255,255,0.15)">
+        <h2>相手と交易</h2>
+        <p>${game.players[myOffer.to].name}に申し込み中: ${resSummary(myOffer.give)} → ${resSummary(myOffer.get)}。返事を待っています。</p>
+        <button class="ghost-btn" data-act="withdrawTrade">申し込みをとりさげる</button>`
+      : `<hr style="border-color:rgba(255,255,255,0.15)">
+    <h2>相手と交易</h2>
+    <div class="sheet__row"><span>相手</span><div class="res-pick" data-row="other"></div></div>
+    <div class="sheet__row"><span>渡す</span><div class="res-pick" data-row="pgive"></div></div>
+    <div class="sheet__row"><span>もらう</span><div class="res-pick" data-row="pget"></div></div>
+    <button class="btn btn--accent" data-act="offerTrade">この内容で申し込む</button>`)
     : `<hr style="border-color:rgba(255,255,255,0.15)">
     <h2>相手と交易</h2>
     <div class="sheet__row"><span>相手</span><div class="res-pick" data-row="other"></div></div>
@@ -1798,7 +1878,7 @@ function renderTradeMenu() {
     b.appendChild(resIcon(r)); const s = document.createElement('span'); s.textContent = `×${p.resources[r]}`; b.appendChild(s);
   }, 'give');
   fillResPick(els.panel.querySelector('[data-row="want"]'), E.RESOURCES, (r) => r === want, (r, b) => b.appendChild(resIcon(r)), 'want');
-  if (!onlineRoom) {
+  if (!myOffer) {
     fillOtherPick(els.panel.querySelector('[data-row="other"]'), other);
     fillStepperRow(els.panel.querySelector('[data-row="pgive"]'), pGive, (r) => p.resources[r], 'pg');
     fillStepperRow(els.panel.querySelector('[data-row="pget"]'), pGet, (r) => game.players[other].resources[r], 'pw');
@@ -1839,6 +1919,12 @@ function renderTradeMenu() {
       ui.data.pGive = null; ui.data.pGet = null;
       playEvents(); persistAndRender(); renderPanel();
     },
+    offerTrade: () => {
+      act('offerTrade', [other, pGive, pGet]);
+      ui.data.pGive = null; ui.data.pGet = null;
+      playEvents(); persistAndRender(); renderPanel();
+    },
+    withdrawTrade: () => { act('withdrawTrade', []); playEvents(); persistAndRender(); renderPanel(); },
     fishOther: (b) => { ui.data.fishOther = Number(b.dataset.p); renderPanel(); },
     bootOther: (b) => { ui.data.bootOther = Number(b.dataset.p); renderPanel(); },
     fishRes: (b) => { ui.data.fishRes = b.dataset.res; renderPanel(); },
