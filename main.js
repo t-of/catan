@@ -166,11 +166,6 @@ const SOUND = {
       t += 0.06 + Math.random() * 0.03;
     });
   },
-  rob: () => { // 盗賊の低い不穏な音（下がる音程＋低いざわめき）
-    const c = ctx();
-    tone(c, { freq: 130, type: 'sawtooth', peak: 0.22, attack: 0.03, decay: 0.38, slideTo: 70 });
-    noiseBurst(c, { filter: 'lowpass', freq: 250, Q: 0.6, peak: 0.1, attack: 0.02, decay: 0.3 });
-  },
   win: () => { // 短いファンファーレ（上がる4音）
     const c = ctx();
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
@@ -201,7 +196,7 @@ const SOUND = {
 // 一部の効果音は音源ファイル（sounds/）に差し替え。初めて鳴らすときに読み込みを始め、
 // 読み込み前・失敗時はその場面だけ元の合成音（SOUND[name]）で鳴らす。
 const SOUND_FILES = {
-  win: 'win.mp3', build: 'build.mp3', trade: 'trade.mp3', rob: 'rob.mp3',
+  win: 'win.mp3', build: 'build.mp3', trade: 'trade.mp3',
   myTurn: 'myTurn.mp3', tradeOffered: 'tradeOffered.mp3', cutin: 'cutin.mp3',
 };
 const sfxBuffers = {}; // name -> AudioBuffer | null（null は読み込み失敗。未読込は未定義）
@@ -565,13 +560,12 @@ function detectCutins() {
 }
 
 // サイコロの合計に応じた盛り上げ（6・8はよく当たる目、7は盗賊、2・12は珍しい目）。
-// 「動き オフ」では揺れ・点滅はせず、色の変化だけに留める（音はそのまま鳴らす）。spinDiceOnce の最後と、
+// 「動き オフ」では揺れ・点滅はせず、色の変化だけに留める（音はそのまま鳴らす。7 は音なし）。spinDiceOnce の最後と、
 // アニメを出さずに結果だけ反映する経路（通信対戦の自分の番・動き オフ）の両方から呼ぶ。
 function applyDiceSumEffects(sum) {
   if (sum == null) return;
   const quiet = document.documentElement.classList.contains('motion-off');
   if (sum === 7) {
-    playSound('rob');
     els.stage.classList.add('stage--seven');
     setTimeout(() => els.stage.classList.remove('stage--seven'), quiet ? 500 : 1100);
   } else if (sum === 6 || sum === 8) {
