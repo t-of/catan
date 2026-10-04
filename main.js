@@ -44,34 +44,162 @@ function setAudioSession(soundOn) {
   try { if (navigator.audioSession) navigator.audioSession.type = soundOn ? 'playback' : 'auto'; } catch { /* 対応していない */ }
 }
 let audioCtx = null;
-function beep(freq, dur) {
-  try {
-    if (!audioCtx) { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); setAudioSession(true); }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.frequency.value = freq;
-    osc.type = 'sine';
-    gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
-    osc.connect(gain).connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + dur);
-  } catch { /* 音が出せなくても遊べる */ }
+function ctx() {
+  if (!audioCtx) { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); setAudioSession(true); }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+// 白色雑音（2秒分）を使い回す。木・石・紙・波・風は、この雑音をフィルタとエンベロープで加工して作る。
+let noiseBuf = null;
+function noiseBuffer(c) {
+  if (noiseBuf && noiseBuf.sampleRate === c.sampleRate) return noiseBuf;
+  const len = c.sampleRate * 2;
+  const buf = c.createBuffer(1, len, c.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  noiseBuf = buf;
+  return buf;
+}
+// 雑音をフィルタに通し、短い音量の山（アタック→減衰）にして鳴らす。
+function noiseBurst(c, { filter = 'lowpass', freq = 800, Q = 1, peak = 0.2, attack = 0.002, decay = 0.1, delay = 0 } = {}) {
+  const src = c.createBufferSource();
+  src.buffer = noiseBuffer(c);
+  const f = c.createBiquadFilter();
+  f.type = filter; f.frequency.value = freq; f.Q.value = Q;
+  const g = c.createGain();
+  const t0 = c.currentTime + delay;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + attack + decay);
+  src.connect(f).connect(g).connect(c.destination);
+  src.start(t0, Math.random() * 1.5);
+  src.stop(t0 + attack + decay + 0.05);
+}
+// 単音（オシレーター）を短い音量の山にして鳴らす。slideTo を渡すと途中で音程を滑らせる。
+function tone(c, { freq = 440, type = 'sine', peak = 0.12, attack = 0.005, decay = 0.12, delay = 0, slideTo = null } = {}) {
+  const osc = c.createOscillator();
+  osc.type = type; osc.frequency.value = freq;
+  const g = c.createGain();
+  const t0 = c.currentTime + delay;
+  if (slideTo != null) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + attack + decay);
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + attack + decay);
+  osc.connect(g).connect(c.destination);
+  osc.start(t0); osc.stop(t0 + attack + decay + 0.05);
+}
+// サイコロが板の上で数回転がって止まるカラカラ音（間がだんだん空いて、最後にコトッと収まる）。
+function diceRattle() {
+  const c = ctx();
+  const n = 5 + Math.floor(Math.random() * 2);
+  let t = 0;
+  for (let i = 0; i < n; i++) {
+    noiseBurst(c, { filter: 'bandpass', freq: 1800 + Math.random() * 1200, Q: 2.5, peak: 0.22 * (1 - i / (n + 2)), attack: 0.001, decay: 0.03, delay: t });
+    t += 0.045 + i * 0.012;
+  }
+  noiseBurst(c, { filter: 'lowpass', freq: 300, Q: 0.7, peak: 0.15, attack: 0.002, decay: 0.09, delay: t + 0.02 });
+}
+// ルーレット中の1コマごとの軽いクリック（diceRattle の一粒だけの版）。
+function diceClick() {
+  try { noiseBurst(ctx(), { filter: 'bandpass', freq: 1600 + Math.random() * 1000, Q: 3, peak: 0.12, attack: 0.001, decay: 0.025 }); } catch { /* 音が出せなくても遊べる */ }
 }
 const SOUND = {
-  dice: () => beep(340, 0.12),
-  build: () => beep(520, 0.1),
-  'buy-dev': () => beep(600, 0.1),
-  trade: () => beep(460, 0.1),
-  rob: () => beep(220, 0.2),
-  win: () => { beep(660, 0.15); setTimeout(() => beep(880, 0.25), 140); },
-  shortage: () => beep(180, 0.08),
-  myTurn: () => beep(700, 0.1), // 通信対戦: 自分の番になった（手番の音より少し高く）
-  tradeOffered: () => { beep(500, 0.05); setTimeout(() => beep(500, 0.05), 100); }, // 通信対戦: 交換を申し込まれた（軽いノック2回）
-  tradeDeclined: () => beep(200, 0.08), // 通信対戦: 交換がことわられた（低い短い1音）
-  disconnected: () => beep(160, 0.22), // 通信対戦: だれかが切れた（低いやわらかい1音）
+  dice: diceRattle,
+  build: () => { // 木づち・石を積むコトン（低い芯＋こもった質感）
+    const c = ctx();
+    tone(c, { freq: 120, type: 'sine', peak: 0.3, attack: 0.001, decay: 0.09 });
+    noiseBurst(c, { filter: 'lowpass', freq: 500, Q: 0.8, peak: 0.25, attack: 0.001, decay: 0.07 });
+  },
+  'buy-dev': () => { // カードをめくるシュッ（ハイパスの周波数を素早く上げる）
+    const c = ctx();
+    const src = c.createBufferSource();
+    src.buffer = noiseBuffer(c);
+    const f = c.createBiquadFilter();
+    f.type = 'highpass';
+    const t0 = c.currentTime;
+    f.frequency.setValueAtTime(1200, t0);
+    f.frequency.exponentialRampToValueAtTime(5000, t0 + 0.09);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(0.18, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+    src.connect(f).connect(g).connect(c.destination);
+    src.start(t0, Math.random()); src.stop(t0 + 0.12);
+  },
+  trade: () => { // 硬貨のチャリン（金属っぽい高い音を2〜3回ずらして重ねる）
+    const c = ctx();
+    const notes = [2200, 2800, 2500];
+    let t = 0;
+    notes.slice(0, 2 + Math.floor(Math.random() * 2)).forEach((f) => {
+      tone(c, { freq: f * (0.95 + Math.random() * 0.1), type: 'triangle', peak: 0.1, attack: 0.001, decay: 0.09, delay: t });
+      t += 0.06 + Math.random() * 0.03;
+    });
+  },
+  rob: () => { // 盗賊の低い不穏な音（下がる音程＋低いざわめき）
+    const c = ctx();
+    tone(c, { freq: 130, type: 'sawtooth', peak: 0.22, attack: 0.03, decay: 0.38, slideTo: 70 });
+    noiseBurst(c, { filter: 'lowpass', freq: 250, Q: 0.6, peak: 0.1, attack: 0.02, decay: 0.3 });
+  },
+  win: () => { // 短いファンファーレ（上がる4音）
+    const c = ctx();
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      tone(c, { freq: f, type: 'square', peak: 0.14, attack: 0.003, decay: i === 3 ? 0.3 : 0.12, delay: i * 0.1 });
+    });
+  },
+  shortage: () => { // 鈍いブッ（低い音＋こもった雑音）
+    const c = ctx();
+    tone(c, { freq: 90, type: 'sine', peak: 0.2, attack: 0.001, decay: 0.08 });
+    noiseBurst(c, { filter: 'lowpass', freq: 220, Q: 0.6, peak: 0.15, attack: 0.001, decay: 0.06 });
+  },
+  myTurn: () => { // 通信対戦: 自分の番になった（やわらかい2音のチャイム）
+    const c = ctx();
+    tone(c, { freq: 660, type: 'sine', peak: 0.12, attack: 0.005, decay: 0.12 });
+    tone(c, { freq: 880, type: 'sine', peak: 0.1, attack: 0.005, decay: 0.16, delay: 0.09 });
+  },
+  tradeOffered: () => { // 通信対戦: 交換を申し込まれた（コン・コンと軽いノック2回）
+    const c = ctx();
+    [0, 0.14].forEach((d) => noiseBurst(c, { filter: 'lowpass', freq: 350, Q: 0.7, peak: 0.2, attack: 0.001, decay: 0.05, delay: d }));
+  },
+  tradeDeclined: () => tone(ctx(), { freq: 180, type: 'sawtooth', peak: 0.14, attack: 0.001, decay: 0.1, slideTo: 120 }), // 通信対戦: 交換がことわられた（低い短いブザー）
+  disconnected: () => tone(ctx(), { freq: 220, type: 'sine', peak: 0.12, attack: 0.02, decay: 0.3, slideTo: 140 }), // 通信対戦: だれかが切れた（低くやわらかく消える）
 };
+// SOUND.xxx() は音が出せない環境でも落ちないように、必ずこれ経由で呼ぶ。
+function playSound(name) {
+  try { if (SOUND[name]) SOUND[name](); } catch { /* 音が出せなくても遊べる */ }
+}
+// 波・風の環境音（ゲーム画面にいる間だけ、小さい音量でループ）。タブが隠れたら止める。
+let ambient = null;
+function ambientStart() {
+  if (ambient || document.hidden) return;
+  try {
+    const c = ctx();
+    const waveSrc = c.createBufferSource();
+    waveSrc.buffer = noiseBuffer(c); waveSrc.loop = true;
+    const waveFilter = c.createBiquadFilter(); waveFilter.type = 'lowpass'; waveFilter.frequency.value = 500;
+    const waveGain = c.createGain(); waveGain.gain.value = 0.02;
+    const lfo = c.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.13; // 波の満ち引き
+    const lfoGain = c.createGain(); lfoGain.gain.value = 0.012;
+    lfo.connect(lfoGain).connect(waveGain.gain);
+    waveSrc.connect(waveFilter).connect(waveGain).connect(c.destination);
+
+    const windSrc = c.createBufferSource();
+    windSrc.buffer = noiseBuffer(c); windSrc.loop = true;
+    const windFilter = c.createBiquadFilter(); windFilter.type = 'bandpass'; windFilter.frequency.value = 900; windFilter.Q.value = 0.5;
+    const windGain = c.createGain(); windGain.gain.value = 0.01;
+    windSrc.connect(windFilter).connect(windGain).connect(c.destination);
+
+    waveSrc.start(); lfo.start(); windSrc.start();
+    ambient = { nodes: [waveSrc, lfo, windSrc] };
+  } catch { /* 音が出せなくても遊べる */ }
+}
+function ambientStop() {
+  if (!ambient) return;
+  ambient.nodes.forEach((n) => { try { n.stop(); } catch { /* 既に止まっている */ } });
+  ambient = null;
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) ambientStop(); else if (!els.gamePanel.hidden) ambientStart();
+});
 
 // ---- DOM ----
 const els = {
@@ -440,7 +568,7 @@ els.continueBtn.addEventListener('click', () => {
   renderAll();
 });
 const homeBtn = document.getElementById('homeBtn');
-function showGame() { els.setupPanel.hidden = true; els.gamePanel.hidden = false; homeBtn.hidden = false; }
+function showGame() { els.setupPanel.hidden = true; els.gamePanel.hidden = false; homeBtn.hidden = false; ambientStart(); }
 
 // 続きがあれば「つづきから」を出す（自動では始めない。まずタイトルを見せる）
 function showContinue() {
@@ -550,7 +678,7 @@ function noteMembersOnline(members, prevMembers) {
     if (members[uid].online === false) {
       if (!(uid in offlineSince)) {
         offlineSince[uid] = now;
-        if (!prevMembers[uid] || prevMembers[uid].online !== false) SOUND.disconnected();
+        if (!prevMembers[uid] || prevMembers[uid].online !== false) playSound('disconnected');
       }
     } else {
       delete offlineSince[uid];
@@ -884,6 +1012,7 @@ homeBtn.addEventListener('click', () => {
   closePanel();
   game = null;
   els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true;
+  ambientStop();
   if (onlineRoom) { leaveOnlineRoom(); showSetupView('mainSetupView'); }
   else showContinue();
 });
@@ -927,7 +1056,7 @@ function playEvents() {
   // ホストは配り終える（persistAndRender）までevents/gainsを残す。ゲストと1台モードはここで使い切る
   const hostHold = onlineRoom && onlineRoom.isHost;
   const evts = hostHold ? game.events.slice() : game.events.splice(0, game.events.length);
-  evts.forEach((e) => { if (SOUND[e]) SOUND[e](); });
+  evts.forEach((e) => playSound(e));
   if (lastRobberHex != null && game.board.robberHex !== lastRobberHex) {
     robberMovedAt = Date.now();
     setTimeout(() => { if (game) renderAll(); }, 3100); // 点滅を止める
@@ -1850,8 +1979,8 @@ function renderWinPanel() {
       ? '<div class="sheet__row"><button class="btn btn--accent" data-act="rematch">もう一度（同じ顔ぶれ）</button><button class="ghost-btn" data-act="closeRoom">部屋を片付けてタイトルへ</button></div>'
       : '<div class="sheet__row"><button class="btn btn--accent" data-act="backToLobby">待合に戻る</button><button class="ghost-btn" data-act="leaveRoom">部屋を出る</button></div>';
   els.panel.innerHTML = `<h2>${game.players[game.winner].name}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>${onlineBtnHtml}`;
-  const backToTitle = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; showSetupView('mainSetupView'); };
-  const backToLobby = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; showSetupView('onlineLobbyView'); renderLobby(); };
+  const backToTitle = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; ambientStop(); showSetupView('mainSetupView'); };
+  const backToLobby = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; ambientStop(); showSetupView('onlineLobbyView'); renderLobby(); };
   bindPanel({
     close: () => { closePanel(); },
     closeRoom: async () => { await onlineRoom.close(); onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {}; prevOnlineStatus = null; try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ } refreshOnlineResume(); backToTitle(); },
@@ -2526,7 +2655,7 @@ function spinDiceOnce(onDone) {
     els.diceBox.innerHTML = '';
     els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
     els.diceBox.appendChild(dieEl(face(), Math.random() * 60 - 30));
-    beep(500 + Math.random() * 300, 0.03);
+    diceClick();
     delay *= 1.25;
     if (delay < 260) setTimeout(spin, delay); else { rolling = false; onDone(); }
   };
@@ -2705,5 +2834,5 @@ function announceMyTurn() {
   if (!humansTurn() || game.phase === 'discard') { announcedTurnKey = key; return; }
   if (announcedTurnKey === key) return;
   announcedTurnKey = key;
-  if (!document.hidden) SOUND.myTurn();
+  if (!document.hidden) playSound('myTurn');
 }
