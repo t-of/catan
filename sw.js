@@ -9,7 +9,7 @@
 // ブラウザの HTTP キャッシュを通さない（install は reload、fetch は no-cache）。古い main.js と新しい index.html が混ざって動かなくなるのを防ぐ。
 
 const PREFIX = 'catan-';
-const VERSION = 'v30';
+const VERSION = 'v31';
 const CACHE = `${PREFIX}${VERSION}`;
 const FONT_CACHE = `${PREFIX}fonts`;
 
@@ -31,6 +31,16 @@ const SHELL = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
+  './sounds/win.mp3',
+  './sounds/build.mp3',
+  './sounds/trade.mp3',
+  './sounds/rob.mp3',
+  './sounds/myTurn.mp3',
+  './sounds/tradeOffered.mp3',
+  './sounds/cutin.mp3',
+  './sounds/wave.mp3',
+  './sounds/bgm-title.mp3',
+  './sounds/bgm-game.mp3',
 ];
 
 self.addEventListener('install', (e) => {

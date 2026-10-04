@@ -57,8 +57,22 @@ function setSound(on) {
   save('sound', on);
   setAudioSession(on);
   if (!on) ambientStop(); else if (!els.gamePanel.hidden) ambientStart();
+  applyBgm();
 }
 soundBtn.addEventListener('click', () => setSound(soundBtn.getAttribute('aria-pressed') !== 'true'));
+// BGM だけのオン・オフ（音が全体オフのときは、こちらがオンでも鳴らさない）。既定はオン。
+const bgmBtn = document.getElementById('bgmBtn');
+let bgmOn = load('bgm', true);
+bgmBtn.setAttribute('aria-pressed', String(bgmOn));
+bgmBtn.textContent = bgmOn ? 'BGM オン' : 'BGM オフ';
+function setBgm(on) {
+  bgmOn = on;
+  bgmBtn.setAttribute('aria-pressed', String(on));
+  bgmBtn.textContent = on ? 'BGM オン' : 'BGM オフ';
+  save('bgm', on);
+  applyBgm();
+}
+bgmBtn.addEventListener('click', () => setBgm(bgmBtn.getAttribute('aria-pressed') !== 'true'));
 let audioCtx = null;
 function ctx() {
   if (!audioCtx) { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); setAudioSession(true); }
@@ -184,54 +198,140 @@ const SOUND = {
     [700, 880, 1047].forEach((f, i) => tone(c, { freq: f, type: 'triangle', peak: 0.14, attack: 0.003, decay: i === 2 ? 0.22 : 0.1, delay: i * 0.07 }));
   },
 };
+// 一部の効果音は音源ファイル（sounds/）に差し替え。初めて鳴らすときに読み込みを始め、
+// 読み込み前・失敗時はその場面だけ元の合成音（SOUND[name]）で鳴らす。
+const SOUND_FILES = {
+  win: 'win.mp3', build: 'build.mp3', trade: 'trade.mp3', rob: 'rob.mp3',
+  myTurn: 'myTurn.mp3', tradeOffered: 'tradeOffered.mp3', cutin: 'cutin.mp3',
+};
+const sfxBuffers = {}; // name -> AudioBuffer | null（null は読み込み失敗。未読込は未定義）
+let sfxLoadStarted = false;
+function loadSfx(c) {
+  if (sfxLoadStarted) return;
+  sfxLoadStarted = true;
+  Object.entries(SOUND_FILES).forEach(([name, file]) => {
+    fetch(`./sounds/${file}`).then((r) => r.arrayBuffer()).then((b) => c.decodeAudioData(b))
+      .then((buf) => { sfxBuffers[name] = buf; })
+      .catch(() => { sfxBuffers[name] = null; });
+  });
+}
+function playBuffer(c, buffer, gain) {
+  const src = c.createBufferSource();
+  src.buffer = buffer;
+  const g = c.createGain(); g.gain.value = gain;
+  src.connect(g).connect(c.destination);
+  src.start();
+}
 // SOUND.xxx() は音が出せない環境でも落ちないように、必ずこれ経由で呼ぶ。
 function playSound(name) {
   if (!soundOn) return;
-  try { if (SOUND[name]) SOUND[name](); } catch { /* 音が出せなくても遊べる */ }
+  try {
+    const c = ctx();
+    if (SOUND_FILES[name]) {
+      loadSfx(c);
+      const buf = sfxBuffers[name];
+      if (buf) { playBuffer(c, buf, 0.6); return; }
+    }
+    if (SOUND[name]) SOUND[name]();
+  } catch { /* 音が出せなくても遊べる */ }
 }
-// 波・風の環境音（ゲーム画面にいる間だけ、小さい音量でループ）。タブが隠れたら止める。
-let ambient = null;
+
+// 波の環境音（ゲーム画面にいる間だけ、小さい音量でループ）。タブが隠れたら止める。
+// 音源ファイル（60秒ループ）を使い、読み込み前・失敗時は鳴らさない（合成音には戻さない）。
+let waveBuffer; // AudioBuffer | null（未読込は undefined）
+let waveLoadStarted = false;
+let ambient = null; // 再生中のノード
+let waveWanted = false; // いま鳴らしたい状態かどうか（読み込み待ちの間も覚えておく）
+function loadWave(c) {
+  if (waveLoadStarted) return;
+  waveLoadStarted = true;
+  fetch('./sounds/wave.mp3').then((r) => r.arrayBuffer()).then((b) => c.decodeAudioData(b))
+    .then((buf) => { waveBuffer = buf; if (waveWanted) ambientStart(); })
+    .catch(() => { waveBuffer = null; });
+}
 function ambientStart() {
+  waveWanted = true;
   if (ambient || document.hidden || !soundOn) return;
   try {
     const c = ctx();
-    const waveSrc = c.createBufferSource();
-    waveSrc.buffer = noiseBuffer(c); waveSrc.loop = true;
-    const waveFilter = c.createBiquadFilter(); waveFilter.type = 'lowpass'; waveFilter.frequency.value = 300;
-    const waveGain = c.createGain(); waveGain.gain.value = 0.002;
-    waveSrc.connect(waveFilter).connect(waveGain).connect(c.destination);
-    // 波 1 つ: 寄せるとき大きく明るく、引くときこもって消える。間隔は毎回ばらつかせる。
-    const swell = () => {
-      const t = c.currentTime, rise = 1.2 + Math.random(), fall = 2.5 + Math.random() * 2;
-      const g = waveGain.gain, f = waveFilter.frequency;
-      g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
-      g.linearRampToValueAtTime(0.03 + Math.random() * 0.02, t + rise);
-      g.setTargetAtTime(0.002, t + rise, fall / 3);
-      f.cancelScheduledValues(t); f.setValueAtTime(f.value, t);
-      f.linearRampToValueAtTime(1000 + Math.random() * 600, t + rise);
-      f.setTargetAtTime(300, t + rise, fall / 3);
-      if (ambient) ambient.timer = setTimeout(swell, (rise + fall + Math.random() * 2) * 1000);
-    };
-
-    const windSrc = c.createBufferSource();
-    windSrc.buffer = noiseBuffer(c); windSrc.loop = true;
-    const windFilter = c.createBiquadFilter(); windFilter.type = 'bandpass'; windFilter.frequency.value = 900; windFilter.Q.value = 0.5;
-    const windGain = c.createGain(); windGain.gain.value = 0.004;
-    windSrc.connect(windFilter).connect(windGain).connect(c.destination);
-
-    waveSrc.start(); windSrc.start();
-    ambient = { nodes: [waveSrc, windSrc], timer: 0 };
-    swell();
+    loadWave(c);
+    if (!waveBuffer) return; // 読み込み中。届いたら loadWave が呼び直す
+    const src = c.createBufferSource();
+    src.buffer = waveBuffer; src.loop = true;
+    const g = c.createGain(); g.gain.value = 0.05;
+    src.connect(g).connect(c.destination);
+    src.start();
+    ambient = { src, gain: g };
   } catch { /* 音が出せなくても遊べる */ }
 }
 function ambientStop() {
+  waveWanted = false;
   if (!ambient) return;
-  clearTimeout(ambient.timer);
-  ambient.nodes.forEach((n) => { try { n.stop(); } catch { /* 既に止まっている */ } });
+  try { ambient.src.stop(); } catch { /* 既に止まっている */ }
   ambient = null;
 }
+
+// BGM（タイトル・待合室／ゲーム画面）。画面が変わったらクロスフェードで切り替え、
+// タブが隠れたら止めて戻ったら再開する。「音」がオフなら鳴らさない。初回のユーザー操作まで待つ
+// （ブラウザの自動再生制限のため）。
+const BGM_FILES = { title: 'bgm-title.mp3', game: 'bgm-game.mp3' };
+const BGM_VOLUME = 0.045; // 効果音より小さめ
+const bgmBuffers = {}; // name -> AudioBuffer | null
+let bgmLoadStarted = false;
+let bgmScreen = 'title'; // いまの画面に合う曲（'title' | 'game'）
+let bgmCurrent = null; // { name, src, gain }
+let bgmArmed = false; // 初回のユーザー操作が済んだか
+function loadBgm(c) {
+  if (bgmLoadStarted) return;
+  bgmLoadStarted = true;
+  Object.entries(BGM_FILES).forEach(([name, file]) => {
+    fetch(`./sounds/${file}`).then((r) => r.arrayBuffer()).then((b) => c.decodeAudioData(b))
+      .then((buf) => { bgmBuffers[name] = buf; applyBgm(); })
+      .catch(() => { bgmBuffers[name] = null; });
+  });
+}
+function bgmFadeOutCurrent(c) {
+  if (!bgmCurrent) return;
+  const old = bgmCurrent; bgmCurrent = null;
+  const g = old.gain.gain;
+  g.cancelScheduledValues(c.currentTime); g.setValueAtTime(g.value, c.currentTime);
+  g.linearRampToValueAtTime(0, c.currentTime + 0.8);
+  try { old.src.stop(c.currentTime + 0.9); } catch { /* 既に止まっている */ }
+}
+// いまの条件（音・BGMのオン・オフ、タブの表示、画面）に合わせて BGM を合わせ直す。
+function applyBgm() {
+  if (!bgmArmed) return;
+  try {
+    const c = ctx();
+    const want = (soundOn && bgmOn && !document.hidden) ? bgmScreen : null;
+    if (bgmCurrent && bgmCurrent.name === want) return;
+    if (!want) { bgmFadeOutCurrent(c); return; }
+    loadBgm(c);
+    const buf = bgmBuffers[want];
+    if (!buf) { bgmFadeOutCurrent(c); return; } // 読み込み中。届いたら loadBgm が呼び直す
+    const src = c.createBufferSource();
+    src.buffer = buf; src.loop = true;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0, c.currentTime);
+    g.gain.linearRampToValueAtTime(BGM_VOLUME, c.currentTime + 0.8);
+    src.connect(g).connect(c.destination);
+    src.start();
+    bgmFadeOutCurrent(c);
+    bgmCurrent = { name: want, src, gain: g };
+  } catch { /* 音が出せなくても遊べる */ }
+}
+function setBgmScreen(name) { bgmScreen = name; applyBgm(); }
+function armBgm() {
+  if (bgmArmed) return;
+  bgmArmed = true;
+  applyBgm();
+}
+document.addEventListener('pointerdown', armBgm, { once: true });
+document.addEventListener('keydown', armBgm, { once: true });
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) ambientStop(); else if (!els.gamePanel.hidden) ambientStart();
+  applyBgm();
 });
 
 // ---- DOM ----
@@ -712,7 +812,7 @@ els.continueBtn.addEventListener('click', () => {
   renderAll();
 });
 const homeBtn = document.getElementById('homeBtn');
-function showGame() { els.setupPanel.hidden = true; els.gamePanel.hidden = false; homeBtn.hidden = false; ambientStart(); }
+function showGame() { els.setupPanel.hidden = true; els.gamePanel.hidden = false; homeBtn.hidden = false; ambientStart(); setBgmScreen('game'); }
 
 // 続きがあれば「つづきから」を出す（自動では始めない。まずタイトルを見せる）
 function showContinue() {
@@ -1165,7 +1265,7 @@ homeBtn.addEventListener('click', () => {
   game = null;
   resetCutinBaseline();
   els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true;
-  ambientStop();
+  ambientStop(); setBgmScreen('title');
   if (onlineRoom) { leaveOnlineRoom(); showSetupView('mainSetupView'); }
   else showContinue();
 });
@@ -2172,8 +2272,8 @@ function renderWinPanel() {
       ? '<div class="sheet__row"><button class="btn btn--accent" data-act="rematch">もう一度（同じ顔ぶれ）</button><button class="ghost-btn" data-act="closeRoom">部屋を片付けてタイトルへ</button></div>'
       : '<div class="sheet__row"><button class="btn btn--accent" data-act="backToLobby">待合に戻る</button><button class="ghost-btn" data-act="leaveRoom">部屋を出る</button></div>';
   els.panel.innerHTML = `<h2>${game.players[game.winner].name}の勝ち！</h2><p>${E.winTargetFor(game, game.winner)}点に到達しました。</p>${onlineBtnHtml}`;
-  const backToTitle = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; ambientStop(); showSetupView('mainSetupView'); };
-  const backToLobby = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; ambientStop(); showSetupView('onlineLobbyView'); renderLobby(); };
+  const backToTitle = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; ambientStop(); setBgmScreen('title'); showSetupView('mainSetupView'); };
+  const backToLobby = () => { closePanel(); els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true; ambientStop(); setBgmScreen('title'); showSetupView('onlineLobbyView'); renderLobby(); };
   bindPanel({
     close: () => { closePanel(); },
     closeRoom: async () => { await onlineRoom.close(); onlineRoom = null; onlineMeta = null; onlineMembers = {}; offlineSince = {}; prevOnlineStatus = null; try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ } refreshOnlineResume(); backToTitle(); },

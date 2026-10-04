@@ -86,3 +86,7 @@
 ```sh
 python3 -m http.server 8000   # → http://localhost:8000/
 ```
+
+## 音源
+
+BGM・効果音の一部: VSQ plus+（https://vsq.co.jp/plus/）。長さ・音量を加工して使用
