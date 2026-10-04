@@ -26,7 +26,9 @@ function affordableRoadEdge(game, idx, eId) {
 }
 
 // ---- 頂点・道の値打ち ----
-function vertexValue(game, vid, level) {
+// idx を渡すと、その人がまだもらっていない航海者版の小島ボーナス(+2点、最初の1軒だけ)を高く見る。
+// これがないと、CPUは産出の良い本島ばかり優先して道・船を15本使い切り、小島に届く前に手詰まりになることがあった。
+function vertexValue(game, vid, level, idx = null) {
   const v = game.board.vertices[vid];
   let score = 0;
   const resSet = new Set();
@@ -39,7 +41,40 @@ function vertexValue(game, vid, level) {
   });
   score += resSet.size * 1.5;
   if (level === 'strong' && v.port) score += v.port === '3:1' ? 0.8 : 1.5;
+  if (idx != null && game.board.islandHexIds && !game.players[idx].islandBonus
+    && v.hexIds.some((h) => game.board.islandHexIds.includes(h))) score += 6;
   return score;
+}
+// 小島ボーナス(航海者版)・霧の探検(探検家と海賊)の狙い先まで、海の頂点をたどって何歩で着くか(届かなければ Infinity)。
+// roadValue はすぐ隣の頂点しか見ないので、これがないと「あと2〜3隻で小島に着く」くらいの船を一歩も動かせず、
+// 船・道を15本使い切って手詰まりになることがあった。
+function waterHopsToGoal(game, startVid, idx) {
+  const isGoal = (v) => v.hexIds.some((h) => {
+    const hex = game.board.hexes[h];
+    if (game.explorersPirates && hex.fog) return true;
+    return game.board.islandHexIds && game.board.islandHexIds.includes(h) && !game.players[idx].islandBonus;
+  });
+  if (isGoal(game.board.vertices[startVid])) return 0;
+  let frontier = [startVid];
+  const seen = new Set(frontier);
+  for (let hop = 1; hop <= 8; hop++) {
+    const next = [];
+    for (const vid of frontier) {
+      for (const eId of game.board.vertices[vid].edgeIds) {
+        const e = game.board.edges[eId];
+        // 海に面した辺しかたどらない(船の通り道)。盤の外周の辺は隣のマスが1つしかなく、それも海として扱う(engine.js の edgeTouchesSea と同じ)
+        if (e.hexIds.length >= 2 && !e.hexIds.some((h) => game.board.hexes[h].terrain === 'water')) continue;
+        const nv = e.v1 === vid ? e.v2 : e.v1;
+        if (seen.has(nv)) continue;
+        seen.add(nv);
+        if (isGoal(game.board.vertices[nv])) return hop;
+        next.push(nv);
+      }
+    }
+    frontier = next;
+    if (!frontier.length) break;
+  }
+  return Infinity;
 }
 // 道の先に、まだ誰も建てていない（距離ルールでも塞がれていない）頂点があるときだけ値打ちを付ける。
 // 常に正の値を返すと、行き場のない方角にも道を延ばし続けて15本を使い切ってしまう（2人対局で詰まる原因だった）。
@@ -50,8 +85,16 @@ function roadValue(game, edgeId, idx, level) {
     const v = game.board.vertices[vid];
     if (v.building) return;
     if (v.neighbors.some((n) => game.board.vertices[n].building)) return; // 距離ルールで永久に置けない
-    best = Math.max(best, vertexValue(game, vid, level));
+    best = Math.max(best, vertexValue(game, vid, level, idx));
   });
+  // 自分が小島ボーナスをまだ持っていない・探検家と海賊で霧が残っているなら、そこへ近づく船にも値打ちを付ける(歩数が近いほど高い)
+  if (game.board.islandHexIds && (!game.players[idx].islandBonus || game.explorersPirates)) {
+    [e.v1, e.v2].forEach((vid) => {
+      if (game.board.vertices[vid].building) return;
+      const hops = waterHopsToGoal(game, vid, idx);
+      if (hops < Infinity) best = Math.max(best, 5 - hops);
+    });
+  }
   return best;
 }
 
@@ -60,7 +103,7 @@ function cpuSetupStep(game, level) {
   const idx = E.currentPlayer(game);
   if (game.setupPending === 'settlement') {
     const options = E.availableSettlementVertices(game, idx, true);
-    const v = level === 'weak' ? pick(options) : options.map((o) => ({ o, s: vertexValue(game, o, level) })).sort((a, b) => b.s - a.s)[0].o;
+    const v = level === 'weak' ? pick(options) : options.map((o) => ({ o, s: vertexValue(game, o, level, idx) })).sort((a, b) => b.s - a.s)[0].o;
     return E.setupPlaceSettlement(game, v);
   }
   const options = game.board.vertices[game.setupLastVertex].edgeIds.filter((eId) => game.board.edges[eId].road == null);
@@ -256,12 +299,12 @@ function greedyBuild(game, idx, level) {
   const p = game.players[idx];
   const cityVs = E.availableCityVertices(game, idx);
   if (p.cities.length < 4 && cityVs.length && affordable(p.resources, E.COSTS.city)) {
-    return E.buildCity(game, cityVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0]);
+    return E.buildCity(game, cityVs.slice().sort((a, b) => vertexValue(game, b, level, idx) - vertexValue(game, a, level, idx))[0]);
   }
   // 開拓地は、建てられる中で一番ましな場所でよい（必ず1点に近づくので、しきい値では足切りしない）
   const stlVs = E.availableSettlementVertices(game, idx, false);
   if (p.settlements.length < 5 && stlVs.length && affordable(p.resources, E.COSTS.settlement)) {
-    const best = stlVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0];
+    const best = stlVs.slice().sort((a, b) => vertexValue(game, b, level, idx) - vertexValue(game, a, level, idx))[0];
     return E.buildSettlement(game, best);
   }
   // 道・船は、先にまだ誰も建てていない頂点があるときだけ（行き場のない方角には延ばさない）。
@@ -415,11 +458,11 @@ function specialBuildStep(game, level) {
   // ふつう・つよい: 貪欲に建てる（greedyBuildの建設部分だけ。交易はしない）
   const cityVs = E.availableCityVertices(game, idx);
   if (p.cities.length < 4 && cityVs.length && affordable(p.resources, E.COSTS.city)) {
-    return E.buildCity(game, cityVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0]);
+    return E.buildCity(game, cityVs.slice().sort((a, b) => vertexValue(game, b, level, idx) - vertexValue(game, a, level, idx))[0]);
   }
   const stlVs = E.availableSettlementVertices(game, idx, false);
   if (p.settlements.length < 5 && stlVs.length && affordable(p.resources, E.COSTS.settlement)) {
-    return E.buildSettlement(game, stlVs.slice().sort((a, b) => vertexValue(game, b, level) - vertexValue(game, a, level))[0]);
+    return E.buildSettlement(game, stlVs.slice().sort((a, b) => vertexValue(game, b, level, idx) - vertexValue(game, a, level, idx))[0]);
   }
   if (game.bank.devDeck.length && affordable(p.resources, E.COSTS.dev)) return E.buyDevCard(game);
   if (level === 'strong') {

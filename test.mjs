@@ -454,15 +454,16 @@ test('CPUの交易: 持っていない資源は出せない', () => {
 });
 
 // ---- 航海者版 ----
-test('航海者版: 本島19＋海18＋小島6＝43マス。金の川1枚・小島は6マス・海賊は海に、盗賊は本島の砂漠にいる', () => {
+test('航海者版: 本島19＋海21＋小島6＝46マス。金の川1枚・小島は6マス・海賊は海に、盗賊は本島の砂漠にいる', () => {
   for (let i = 0; i < 10; i++) {
     const g = E.createGame(4, Math.random, { expansions: ['seafarers'] });
     assert.deepEqual(g.expansions, ['seafarers']);
     assert.equal(g.winTarget, 14);
-    assert.equal(g.board.hexes.length, 43);
+    assert.equal(g.board.hexes.length, 46);
     const counts = {};
     g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
-    assert.equal(counts.water, 18);
+    // 本島を囲む18マスに加えて、小島3つぶん(隣り合う2マス単位)を海からの船で届くようにする橋を3マス足す
+    assert.equal(counts.water, 21);
     assert.equal(counts.gold, 1);
     assert.equal(g.board.islandHexIds.length, 6);
     assert.equal(g.board.hexes[g.board.robberHex].terrain, 'desert');
@@ -578,16 +579,17 @@ test('航海者版: CPUだけで4人、1局を最後まで決着できる（数�
 });
 
 // ---- 航海者版の5〜6人用拡張 ----
-test('航海者版×5〜6人: 本島30＋海22＋小島6＝58マス。銀行24枚・発展カード34枚・特別建設フェイズつき', () => {
+test('航海者版×5〜6人: 本島30＋海23＋小島6＝59マス。銀行24枚・発展カード34枚・特別建設フェイズつき', () => {
   for (const n of [5, 6]) {
     for (let i = 0; i < 5; i++) {
       const g = E.createGame(n, Math.random, { expansions: ['seafarers'] });
       assert.deepEqual(g.expansions.sort(), ['5-6player', 'seafarers']);
       assert.equal(g.winTarget, 14);
-      assert.equal(g.board.hexes.length, 58);
+      assert.equal(g.board.hexes.length, 59);
       const counts = {};
       g.board.hexes.forEach((h) => { counts[h.terrain] = (counts[h.terrain] || 0) + 1; });
-      assert.equal(counts.water, 22);
+      // 本島を囲む22マスに加えて、3つの小島のうち本島の海に隣り合っていない1つへ船で届くよう橋を1マス足す
+      assert.equal(counts.water, 23);
       assert.equal(counts.gold, 1);
       assert.equal(counts.desert, 1);
       assert.equal(g.board.islandHexIds.length, 6);
@@ -1518,13 +1520,13 @@ test('プレイヤー名: 指定すればログに使われ、空ならプレイ
 });
 
 // ---- 探検家と海賊 ----
-test('探検家と海賊: 航海者版と同じ盤（43マス）で、小島6マスがすべて霧、うち1枚が金の川。勝利点は14点', () => {
+test('探検家と海賊: 航海者版と同じ盤（46マス）で、小島6マスがすべて霧、うち1枚が金の川。勝利点は14点', () => {
   for (let i = 0; i < 10; i++) {
     const g = E.createGame(4, Math.random, { expansions: ['explorers-pirates'] });
     assert.deepEqual(g.expansions, ['explorers-pirates']);
     assert.equal(g.explorersPirates, true);
     assert.equal(g.winTarget, 14);
-    assert.equal(g.board.hexes.length, 43);
+    assert.equal(g.board.hexes.length, 46);
     const islandHexes = [...g.board.islandHexIds].map((id) => g.board.hexes[id]);
     assert.equal(islandHexes.length, 6);
     assert.ok(islandHexes.every((h) => h.fog === true));
@@ -1589,14 +1591,14 @@ test('探検家と海賊: CPUだけで4人、1局を最後まで決着できる�
 });
 
 // ---- 探検家と海賊の5〜6人用拡張 ----
-test('探検家と海賊×5〜6人: 本島30＋海22＋小島6＝58マス。銀行24枚・発展カード34枚・特別建設フェイズつき', () => {
+test('探検家と海賊×5〜6人: 本島30＋海23＋小島6＝59マス。銀行24枚・発展カード34枚・特別建設フェイズつき', () => {
   for (const n of [5, 6]) {
     for (let i = 0; i < 5; i++) {
       const g = E.createGame(n, Math.random, { expansions: ['explorers-pirates'] });
       assert.deepEqual(g.expansions.sort(), ['5-6player', 'explorers-pirates']);
       assert.equal(g.explorersPirates, true);
       assert.equal(g.winTarget, 14);
-      assert.equal(g.board.hexes.length, 58);
+      assert.equal(g.board.hexes.length, 59);
       const islandHexes = [...g.board.islandHexIds].map((id) => g.board.hexes[id]);
       assert.equal(islandHexes.length, 6);
       assert.ok(islandHexes.every((h) => h.fog === true));

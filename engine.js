@@ -302,10 +302,49 @@ function adjacentWaterCoords(landCoords) {
   return [...ring.values()];
 }
 
+// 小島(隣り合う2マスで1つ)が本島の海(岸)に1マスも隣り合っていなければ、間に浮かぶ1マスだけ海にして橋を架ける。
+// 3〜4人の盤だと、SEAFARERS_ISLANDS の座標が本島の海からヘクス2つぶん離れていて、船で永遠に届かなかった
+// （5〜6人の広い盤ではもともと3つのうち2つは隣り合っていたので、そこには何も足さない＝マス数は変わらない）。
+function bridgeToShore(mainCoords, waterCoords, islandCoords) {
+  const key = (c) => `${c.q},${c.r}`;
+  const islandSet = new Set(islandCoords.map(key));
+  const shore = mainCoords.concat(waterCoords);
+  const touchesShore = (c) => HEX_DIRS.some(([dq, dr]) => shore.some((s) => s.q === c.q + dq && s.r === c.r + dr));
+  const occupied = new Set(mainCoords.concat(waterCoords, islandCoords).map(key));
+  const visited = new Set();
+  const bridges = new Map();
+  islandCoords.forEach((start) => {
+    if (visited.has(key(start))) return;
+    // 隣り合う島マスどうしは同じ小島として、代表の1マスにだけ橋を架ければ届く
+    const group = [start];
+    visited.add(key(start));
+    for (let i = 0; i < group.length; i++) {
+      HEX_DIRS.forEach(([dq, dr]) => {
+        const nk = `${group[i].q + dq},${group[i].r + dr}`;
+        if (islandSet.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          group.push(islandCoords.find((c) => key(c) === nk));
+        }
+      });
+    }
+    if (group.some(touchesShore)) return; // どれか1マスでも海岸に隣り合っていれば橋は要らない
+    for (const isl of group) {
+      for (const [dq, dr] of HEX_DIRS) {
+        const cand = { q: isl.q + dq, r: isl.r + dr };
+        const ck = key(cand);
+        if (occupied.has(ck) || bridges.has(ck)) continue;
+        if (touchesShore(cand)) { bridges.set(ck, cand); return; }
+      }
+    }
+  });
+  return [...bridges.values()];
+}
+
 function buildSeafarersBoard(rng, ext) {
   const mainCoords = boardCoords(ext); // 3〜4人は本島19マス、5〜6人は5〜6人拡張と同じ30マス
-  const waterCoords = adjacentWaterCoords(mainCoords); // 本島を1周する海
   const islandCoords = SEAFARERS_ISLANDS.flat(); // 小島3つ×2マス（本島から離れた外海に浮かぶ）
+  const shoreWater = adjacentWaterCoords(mainCoords); // 本島を1周する海
+  const waterCoords = shoreWater.concat(bridgeToShore(mainCoords, shoreWater, islandCoords));
   let nextId = 0;
   const hexes = [];
   const terrainCounts = ext ? SEAFARERS_TERRAIN_COUNTS_56 : SEAFARERS_TERRAIN_COUNTS;
