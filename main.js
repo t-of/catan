@@ -4,6 +4,10 @@
 import * as E from './engine.js';
 import * as I from './illust.js';
 import * as CPU from './cpu.js';
+import {
+  createRoom, joinRoom, isValidCode, roomSanitizeName, roomLinkFor, roomCodeFromHash,
+  GAME, emptySeats, parseSeats, parseSettings, seatMembers, canStart,
+} from './online.js';
 
 // localStorage はほかのアプリと共有される（同じ t-of.github.io のため）。キーは必ず 'catan.' で始める。
 const STORE = 'catan.';
@@ -78,6 +82,28 @@ const els = {
   seatsPanel: document.getElementById('seatsPanel'),
   startBtn: document.getElementById('startBtn'),
   continueBtn: document.getElementById('continueBtn'),
+  mainSetupView: document.getElementById('mainSetupView'),
+  onlineBtn: document.getElementById('onlineBtn'),
+  onlineResumeBtn: document.getElementById('onlineResumeBtn'),
+  onlineNameView: document.getElementById('onlineNameView'),
+  onlineNameInput: document.getElementById('onlineNameInput'),
+  onlineNameNextBtn: document.getElementById('onlineNameNextBtn'),
+  onlineNameBackBtn: document.getElementById('onlineNameBackBtn'),
+  onlineChoiceView: document.getElementById('onlineChoiceView'),
+  onlineCreateBtn: document.getElementById('onlineCreateBtn'),
+  onlineJoinCode: document.getElementById('onlineJoinCode'),
+  onlineJoinBtn: document.getElementById('onlineJoinBtn'),
+  onlineChoiceError: document.getElementById('onlineChoiceError'),
+  onlineChoiceBackBtn: document.getElementById('onlineChoiceBackBtn'),
+  onlineLobbyView: document.getElementById('onlineLobbyView'),
+  lobbyCode: document.getElementById('lobbyCode'),
+  lobbyInviteBtn: document.getElementById('lobbyInviteBtn'),
+  lobbyCountRow: document.getElementById('lobbyCountRow'),
+  lobbyCountPicker: document.getElementById('lobbyCountPicker'),
+  lobbySeats: document.getElementById('lobbySeats'),
+  lobbyStartBtn: document.getElementById('lobbyStartBtn'),
+  lobbyWaitText: document.getElementById('lobbyWaitText'),
+  lobbyLeaveBtn: document.getElementById('lobbyLeaveBtn'),
   turnNum: document.getElementById('turnNum'),
   board: document.getElementById('board'),
   diceBox: document.getElementById('diceBox'),
@@ -172,6 +198,15 @@ let rolling = false; // サイコロを振るアニメの途中。この間は�
 let playerCount = load('playerCount', 3);
 if (![3, 4, 5, 6].includes(playerCount)) playerCount = 3;
 let ui = { mode: 'idle', data: {} };
+
+// ---- 通信対戦（みんなのスマホで） ----
+let onlineRoom = null;          // room.js の Room。1台モードでは null
+let onlineMeta = null;          // 部屋の meta（settings・seats は JSON 文字列のまま持つ）
+let onlineMembers = {};         // { [uid]: { name, online, joinedAt } }
+let onlinePlayerCount = 4;      // 待合で選ぶ人数（3 or 4）
+let onlineName = load('onlineName', '');
+let onlinePendingCode = null;   // リンク（#room=）から開いたときの、まだ入っていないコード
+function isOnlineGuest() { return !!(onlineRoom && !onlineRoom.isHost); }
 
 // ---- 人数選び ----
 els.playerCountPicker.addEventListener('click', (e) => {
@@ -363,14 +398,229 @@ function showContinue() {
 }
 showContinue();
 
-// タイトルへ戻る。盤は操作のたびに保存済みなので「つづきから」で戻れる
+// ================================================================
+// 通信対戦（みんなのスマホで）。段階4: 待合から「はじめる」で全員に同じ盤が出るところまで。
+// 対局中の同期（捨て札・交換など）は段階5。ここではゲストは見るだけ（humansTurn/act で止める）。
+// ================================================================
+function showSetupView(id) {
+  ['mainSetupView', 'onlineNameView', 'onlineChoiceView', 'onlineLobbyView'].forEach((v) => { els[v].hidden = v !== id; });
+}
+function refreshOnlineResume() {
+  const saved = load('onlineRoom', null);
+  els.onlineResumeBtn.hidden = !saved;
+  if (saved) els.onlineResumeBtn.textContent = `部屋に戻る（${saved.code}）`;
+}
+refreshOnlineResume();
+
+async function enterRoom(fn) {
+  els.onlineChoiceError.textContent = '';
+  try {
+    const room = await fn();
+    onlineRoom = room;
+    save('onlineRoom', { v: 1, code: room.code, at: Date.now() });
+    wireOnlineRoom();
+    showSetupView('onlineLobbyView');
+  } catch (err) {
+    els.onlineChoiceError.textContent = (err && err.message) || '部屋に入れませんでした';
+    showSetupView('onlineChoiceView');
+  }
+}
+
+async function leaveOnlineRoom() {
+  if (!onlineRoom) return;
+  try { await onlineRoom.leave(); } catch { /* 無視 */ }
+  onlineRoom = null; onlineMeta = null; onlineMembers = {};
+  try { localStorage.removeItem(STORE + 'onlineRoom'); } catch { /* 無視 */ }
+  refreshOnlineResume();
+}
+
+// ホストだけ: 新しく入ってきた人を、空いている人の席に座らせる
+function hostSyncSeats() {
+  if (!onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
+  const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
+  const before = parseSeats(onlineMeta.seats, count);
+  const after = seatMembers(before, onlineMembers);
+  if (JSON.stringify(after) !== JSON.stringify(before)) onlineRoom.setMeta({ seats: JSON.stringify(after) });
+}
+
+// meta.seats（席の持ち主・CPUの強さ）を、画面の isCpuSeat/seatLevel が読む形の `seats` に置きかえる。
+// game の中身（JSON）は onState で揃うが、「誰が CPU か」は meta 側にしかないので、ホスト・ゲストとも
+// onMeta が来るたびにここで合わせる（でないとゲストの画面だけ CPU 表示がずれる）。
+function applySeatsFromMeta(meta) {
+  if (!meta) return;
+  const count = parseSettings(meta.settings).playerCount || onlinePlayerCount;
+  seats = parseSeats(meta.seats, count).map((s) => (s.type === 'cpu'
+    ? { type: 'cpu', level: s.level || 'normal', name: '' }
+    : { type: 'human', level: 'normal', name: s.name || '' }));
+}
+
+function wireOnlineRoom() {
+  onlineRoom.onMeta((meta) => {
+    onlineMeta = meta;
+    applySeatsFromMeta(meta);
+    if (meta && meta.status === 'playing' && els.gamePanel.hidden) showGame();
+    renderLobby();
+  });
+  onlineRoom.onMembers((members) => {
+    onlineMembers = members || {};
+    hostSyncSeats();
+    renderLobby();
+  });
+  onlineRoom.onState((json) => {
+    try { game = JSON.parse(json); } catch { return; }
+    ui = { mode: modeForPhase(), data: {} };
+    renderAll();
+  });
+}
+
+function renderLobby() {
+  if (!onlineRoom) return;
+  els.lobbyCode.textContent = onlineRoom.code;
+  if (!onlineMeta) return;
+  const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
+  const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
+  els.lobbyCountRow.hidden = !onlineRoom.isHost;
+  [...els.lobbyCountPicker.children].forEach((b) => b.classList.toggle('is-selected', Number(b.dataset.count) === count));
+  els.lobbySeats.innerHTML = '';
+  lobbySeatsArr.forEach((seat, i) => {
+    const row = document.createElement('div');
+    row.className = 'seat-row';
+    const label = document.createElement('span');
+    label.className = 'seat-row__name';
+    if (seat.type === 'cpu') label.textContent = `CPU・${CPU.LEVELS.find((l) => l.id === seat.level)?.name || 'ふつう'}`;
+    else if (seat.uid) {
+      const member = onlineMembers[seat.uid];
+      const suffix = (seat.uid === onlineRoom.uid) ? '（自分）' : (member && member.online === false ? '・切断中' : '');
+      label.textContent = (seat.name || '名無し') + suffix;
+    } else label.textContent = '待っています…';
+    row.appendChild(label);
+    if (onlineRoom.isHost) {
+      if (seat.type === 'human' && !seat.uid) {
+        const cpuBtn = document.createElement('button');
+        cpuBtn.className = 'btn btn--small'; cpuBtn.textContent = 'CPUにする';
+        cpuBtn.dataset.i = i; cpuBtn.dataset.act = 'toCpu';
+        row.appendChild(cpuBtn);
+      } else if (seat.type === 'cpu') {
+        const humanBtn = document.createElement('button');
+        humanBtn.className = 'btn btn--small'; humanBtn.textContent = '人にする';
+        humanBtn.dataset.i = i; humanBtn.dataset.act = 'toHuman';
+        row.appendChild(humanBtn);
+        const levels = document.createElement('div');
+        levels.className = 'segmented seat-row__level';
+        CPU.LEVELS.forEach((l) => {
+          const b = document.createElement('button');
+          b.className = 'btn' + (l.id === seat.level ? ' is-selected' : '');
+          b.textContent = l.name; b.dataset.i = i; b.dataset.act = 'level'; b.dataset.level = l.id;
+          levels.appendChild(b);
+        });
+        row.appendChild(levels);
+      }
+    }
+    els.lobbySeats.appendChild(row);
+  });
+  const ready = canStart(lobbySeatsArr);
+  els.lobbyStartBtn.hidden = !onlineRoom.isHost;
+  els.lobbyStartBtn.disabled = !ready;
+  els.lobbyWaitText.hidden = onlineRoom.isHost;
+}
+
+els.onlineBtn.addEventListener('click', () => {
+  els.onlineNameInput.value = onlineName;
+  showSetupView('onlineNameView');
+});
+els.onlineResumeBtn.addEventListener('click', () => {
+  const saved = load('onlineRoom', null);
+  if (!saved) return;
+  onlineName = load('onlineName', '') || onlineName;
+  enterRoom(() => joinRoom(saved.code, { game: GAME, name: onlineName || '名無し' }));
+});
+els.onlineNameBackBtn.addEventListener('click', () => { onlinePendingCode = null; showSetupView('mainSetupView'); });
+els.onlineNameNextBtn.addEventListener('click', () => {
+  onlineName = roomSanitizeName(els.onlineNameInput.value) || '名無し';
+  save('onlineName', onlineName);
+  if (onlinePendingCode) {
+    const code = onlinePendingCode; onlinePendingCode = null;
+    enterRoom(() => joinRoom(code, { game: GAME, name: onlineName }));
+  } else {
+    showSetupView('onlineChoiceView');
+  }
+});
+els.onlineCreateBtn.addEventListener('click', () => {
+  enterRoom(() => createRoom({
+    game: GAME, name: onlineName, settings: { playerCount: onlinePlayerCount }, seats: emptySeats(onlinePlayerCount),
+  }));
+});
+els.onlineJoinBtn.addEventListener('click', () => {
+  const code = els.onlineJoinCode.value.trim().toUpperCase();
+  if (!isValidCode(code)) { els.onlineChoiceError.textContent = '部屋コードが違います'; return; }
+  enterRoom(() => joinRoom(code, { game: GAME, name: onlineName }));
+});
+els.onlineChoiceBackBtn.addEventListener('click', () => showSetupView('mainSetupView'));
+
+els.lobbyCountPicker.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-count]');
+  if (!btn || !onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
+  const count = Number(btn.dataset.count);
+  onlinePlayerCount = count;
+  const before = parseSeats(onlineMeta.seats, parseSettings(onlineMeta.settings).playerCount || 4);
+  const resized = Array.from({ length: count }, (_, i) => before[i] || { type: 'human', uid: null, name: '' });
+  onlineRoom.setMeta({ settings: JSON.stringify({ playerCount: count }), seats: JSON.stringify(resized) });
+});
+els.lobbySeats.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || !onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
+  const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
+  const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
+  const i = Number(btn.dataset.i);
+  if (btn.dataset.act === 'toCpu') lobbySeatsArr[i] = { type: 'cpu', level: 'normal' };
+  else if (btn.dataset.act === 'toHuman') lobbySeatsArr[i] = { type: 'human', uid: null, name: '' };
+  else if (btn.dataset.act === 'level') lobbySeatsArr[i].level = btn.dataset.level;
+  onlineRoom.setMeta({ seats: JSON.stringify(lobbySeatsArr) });
+});
+els.lobbyStartBtn.addEventListener('click', () => {
+  if (!onlineRoom || !onlineRoom.isHost || !onlineMeta) return;
+  const count = parseSettings(onlineMeta.settings).playerCount || onlinePlayerCount;
+  const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
+  if (!canStart(lobbySeatsArr)) return;
+  seats = lobbySeatsArr.map((s) => (s.type === 'cpu'
+    ? { type: 'cpu', level: s.level || 'normal', name: '' }
+    : { type: 'human', level: 'normal', name: s.name || '' }));
+  const names = seats.map((s) => s.name);
+  game = E.createGame(count, Math.random, { expansions: [], scenario: null, names });
+  ui = { mode: modeForPhase(), data: {} };
+  onlineRoom.setMeta({ status: 'playing' });
+  onlineRoom.publish(JSON.stringify(game));
+  showGame();
+  renderAll();
+});
+els.lobbyInviteBtn.addEventListener('click', () => {
+  if (!onlineRoom) return;
+  const link = roomLinkFor(onlineRoom.code);
+  WebAppKit.share({ text: `カタンの部屋 ${onlineRoom.code} に来てね`, url: link });
+});
+els.lobbyLeaveBtn.addEventListener('click', async () => {
+  await leaveOnlineRoom();
+  showSetupView('mainSetupView');
+});
+
+// リンク（#room=ABCD）で開いたら、名前を聞いてからその部屋に直接入る
+const hashRoomCode = roomCodeFromHash(location.hash);
+if (hashRoomCode) {
+  onlinePendingCode = hashRoomCode;
+  history.replaceState(null, '', location.pathname + location.search);
+  els.onlineNameInput.value = onlineName;
+  showSetupView('onlineNameView');
+}
+
+// タイトルへ戻る。盤は操作のたびに保存済みなので「つづきから」で戻れる（通信対戦では部屋を出る）
 homeBtn.addEventListener('click', () => {
   if (rolling) return;
   clearTimeout(cpuTimer); cpuTimer = null;
   closePanel();
   game = null;
   els.gamePanel.hidden = true; els.setupPanel.hidden = false; homeBtn.hidden = true;
-  showContinue();
+  if (onlineRoom) { leaveOnlineRoom(); showSetupView('mainSetupView'); }
+  else showContinue();
 });
 
 function modeForPhase() {
@@ -383,11 +633,21 @@ function modeForPhase() {
   return 'idle';
 }
 
-// ルールを書き換える操作は、必ずここを通す（通信対戦を足すときに、送る場所をここ1つにまとめるため）。
-// 今は1台モードしかないので、engineの同じ名前の関数を呼ぶだけ。保存・描画・音はこれまでどおり呼び出し側で行う。
-function act(name, args) { return E[name](game, ...(args || [])); }
+// ルールを書き換える操作は、必ずここを通す（通信対戦の送り口をここ1つにまとめるため）。
+// 1台モード・通信のホストは engine の同じ名前の関数をその場で呼ぶ。通信のゲストはまだ操作を送れない
+// （段階5で room.send に差し替える。今は「同じ盤が出る」までなので、ゲストの画面は見るだけ）。
+function act(name, args) {
+  if (isOnlineGuest()) return false;
+  return E[name](game, ...(args || []));
+}
 
-function persistAndRender() { save('game', game); renderAll(); }
+// 通信対戦では catan.game に保存しない（1台モードの「つづきから」を消さないため）。
+// ホストは操作のたびに部屋へ配る。ゲストは onState で受け取るだけなのでここは通らない。
+function persistAndRender() {
+  if (onlineRoom) { if (onlineRoom.isHost) onlineRoom.publish(JSON.stringify(game)); }
+  else save('game', game);
+  renderAll();
+}
 
 function playEvents() {
   if (!game) return;
@@ -487,6 +747,7 @@ function nextCpuJob() {
   return isCpuSeat(E.actingPlayer(game)) ? { kind: 'step' } : null;
 }
 function scheduleCpu() {
+  if (isOnlineGuest()) return; // CPU はホストの端末だけが回す
   if (cpuTimer || !game) return;
   const job = nextCpuJob();
   if (!job) return;
@@ -498,7 +759,7 @@ function scheduleCpu() {
     else CPU.step(game, seatLevel(E.actingPlayer(game)));
     ui = { mode: modeForPhase(), data: {} };
     playEvents();
-    save('game', game);
+    if (onlineRoom) onlineRoom.publish(JSON.stringify(game)); else save('game', game);
     renderAll();
     scheduleCpu();
   }, CPU_SPEEDS[cpuSpeed][1]);
@@ -1848,6 +2109,7 @@ function renderProgressKnightTargetPanel() {
 // CPU の手番・捨て札の最中は、盤やボタンを人が触っても動かない（CPUの手として誤って進んでしまうのを防ぐ）
 function humansTurn() {
   if (!game) return false;
+  if (isOnlineGuest()) return false; // 通信のゲストはまだ操作できない（段階5で差し替える）
   if (game.phase === 'discard') return game.pendingDiscards.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'goldPick') return game.pendingGoldPicks.some((d) => !isCpuSeat(d.player));
   if (game.phase === 'scienceBonus') return game.pendingScienceBonus.some((p) => !isCpuSeat(p));

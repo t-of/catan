@@ -53,7 +53,7 @@
       <div class="setup__board"><svg id="titleBoard" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg></div>
       <div class="setup__logo">catan</div>
       <p class="setup__lead">開拓と交易のボードゲーム。1台で交代して遊ぶ試作です。</p>
-      <div class="panel setup__panel">
+      <div class="panel setup__panel" id="mainSetupView">
         <div class="setup__row">
           <span>人数</span>
           <div class="segmented" id="playerCountPicker">
@@ -87,6 +87,47 @@
         <div class="seats" id="seatsPanel"></div>
         <button class="btn btn--accent btn--big" id="startBtn">はじめる</button>
         <button class="btn" id="continueBtn" hidden>つづきから</button>
+        <button class="btn" id="onlineBtn">みんなのスマホで</button>
+        <button class="btn" id="onlineResumeBtn" hidden>部屋に戻る</button>
+      </div>
+
+      <!-- 通信対戦: 名前 -->
+      <div class="panel setup__panel" id="onlineNameView" hidden>
+        <h2>名前</h2>
+        <input class="seat-row__name" id="onlineNameInput" maxlength="10" inputmode="text" placeholder="名無し" style="max-width:none">
+        <p class="setup__note">本名でなくてよいです。10字まで。</p>
+        <button class="btn btn--accent btn--big" id="onlineNameNextBtn">次へ</button>
+        <button class="btn" id="onlineNameBackBtn">もどる</button>
+      </div>
+
+      <!-- 通信対戦: 部屋を作る / 入る -->
+      <div class="panel setup__panel" id="onlineChoiceView" hidden>
+        <h2>みんなのスマホで</h2>
+        <button class="btn btn--accent btn--big" id="onlineCreateBtn">部屋を作る</button>
+        <div class="setup__row">
+          <input class="seat-row__name" id="onlineJoinCode" maxlength="4" inputmode="text" placeholder="コード" style="max-width:none;text-transform:uppercase">
+          <button class="btn" id="onlineJoinBtn">入る</button>
+        </div>
+        <p class="setup__note" id="onlineChoiceError"></p>
+        <button class="btn" id="onlineChoiceBackBtn">もどる</button>
+      </div>
+
+      <!-- 通信対戦: 待合 -->
+      <div class="panel setup__panel" id="onlineLobbyView" hidden>
+        <h2>待合</h2>
+        <div class="room-code" id="lobbyCode"></div>
+        <button class="btn" id="lobbyInviteBtn">招待する</button>
+        <div class="setup__row" id="lobbyCountRow">
+          <span>人数</span>
+          <div class="segmented" id="lobbyCountPicker">
+            <button class="btn" data-count="3">3人</button>
+            <button class="btn" data-count="4">4人</button>
+          </div>
+        </div>
+        <div class="seats" id="lobbySeats"></div>
+        <button class="btn btn--accent btn--big" id="lobbyStartBtn">はじめる</button>
+        <p class="setup__note" id="lobbyWaitText">ホストがはじめるのを待っています。</p>
+        <button class="btn" id="lobbyLeaveBtn">部屋を出る</button>
       </div>
     </section>
 

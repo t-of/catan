@@ -124,6 +124,12 @@ button { font: inherit; color: inherit; }
 #scenarioPicker { flex-wrap: wrap; }
 #scenarioPicker .btn { flex: 1 1 40%; }
 
+/* ---- 通信対戦（部屋コード） ---- */
+.room-code {
+  font-family: var(--serif); font-size: clamp(28px, 9vw, 40px); font-weight: 700;
+  letter-spacing: 6px; text-align: center; color: var(--accent-hi);
+}
+
 /* ---- 席ごとの人／CPU選び ---- */
 .seats { display: flex; flex-direction: column; gap: 6px; }
 .seat-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
