@@ -588,6 +588,8 @@ const ONLINE_TURN_ACTIONS = new Set([
   'setupPlaceSettlement', 'setupPlaceRoad',
   'playYearOfPlenty', 'playMonopoly', 'playRoadBuilding',
   'buildShip', 'moveShip', // 航海者版
+  'improveCity', 'buildWall', 'buildKnight', 'activateKnight', 'upgradeKnight',
+  'moveKnight', 'expelKnight', 'chaseRobber', 'playProgressCard', 'tradeCommodity', // 都市と騎士
 ]);
 // 手番と関係なく、自分の分を片付ける操作（席番号は信用せず、ホストが送り主から引いた席で上書きする）
 const ONLINE_SELF_ACTIONS = new Set(['discardCards', 'pickGold', 'pickScienceBonus', 'submitCamelBid']);
@@ -1464,9 +1466,11 @@ function renderHand() {
 // ================================================================
 const EVENT_FACE_LABEL = { barbarian: '蛮族の船', trade: '交易の城門', politics: '政治の城門', science: '科学の城門' };
 function renderCk() {
-  if (!game.players[E.currentPlayer(game)].cityImprovements) { els.ckPanel.hidden = true; return; }
+  // 通信対戦では「自分の席」の商品・発展段階・騎士を出す（手番の人のものを全員の画面に出さない。renderHandと同じ考え方）
+  const myIdx = handSeatIndex();
+  if (!game.players[myIdx].cityImprovements) { els.ckPanel.hidden = true; return; }
   els.ckPanel.hidden = false;
-  const idx = E.currentPlayer(game);
+  const idx = myIdx;
   const p = game.players[idx];
   els.ckPanel.innerHTML = '';
   const head = document.createElement('div');
@@ -1761,7 +1765,9 @@ function renderPanel() {
     return;
   }
   if (ui.mode === 'scienceBonus' && game.phase === 'scienceBonus') {
-    const p = game.pendingScienceBonus.find((x) => !isCpuSeat(x));
+    const p = onlineRoom
+      ? game.pendingScienceBonus.find((x) => x === mySeatIndex())
+      : game.pendingScienceBonus.find((x) => !isCpuSeat(x));
     if (p != null) { openPanel(); renderScienceBonusPanel(p); }
     else closePanel();
     return;

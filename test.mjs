@@ -1669,15 +1669,52 @@ test('online.js: subSeat/freeSeat/revertSubbedSeats（切断・つなぎ直し�
   assert.deepEqual(stillOut[0], subbed[0]);
 });
 
-test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」と「航海者版」がready（段階9〜9-2）', async () => {
+test('online.js: canStart は5〜6人でも成り立つ。ONLINE_EXPANSIONSは「なし」「航海者版」「都市と騎士」がready（段階9〜9-3）', async () => {
   const { canStart, ONLINE_EXPANSIONS } = await import('./online.js');
   const seats6 = Array.from({ length: 6 }, (_, i) => (i < 2
     ? { type: 'human', uid: `u${i}` }
     : { type: 'cpu', level: 'normal' }));
   assert.equal(canStart(seats6), true);
   assert.equal(canStart(seats6.slice(0, 5)), true);
-  assert.deepEqual(ONLINE_EXPANSIONS.filter((x) => x.ready).map((x) => x.id), ['none', 'seafarers']);
-  assert.equal(ONLINE_EXPANSIONS.filter((x) => !['none', 'seafarers'].includes(x.id)).every((x) => x.ready === false), true);
+  const readyIds = ['none', 'seafarers', 'cities-knights'];
+  assert.deepEqual(ONLINE_EXPANSIONS.filter((x) => x.ready).map((x) => x.id), readyIds);
+  assert.equal(ONLINE_EXPANSIONS.filter((x) => !readyIds.includes(x.id)).every((x) => x.ready === false), true);
+});
+
+// 通信対戦9-3: 都市と騎士を開ける。都市の発展・都市壁・騎士(建てる/起動/昇格/移動/追い出す/盗賊払い)・
+// 進歩カード・商品の交易はすべて手番の操作（main.js ONLINE_TURN_ACTIONS）。engineはcurrentPlayer(game)だけを
+// 見て動かすので、手番でない人が送っても手番の人として当たってしまう前提を、代表としてbuildKnightで確かめる
+// （9-2のbuildShipと同じ考え方。ホスト側の確かめはDOM依存で直接testできないため）。
+test('都市と騎士: buildKnight/改良/進歩カードはcurrentPlayerにしか当たらない（手番の確かめはホスト側の責任）', () => {
+  const g = ckGame();
+  g.phase = 'main'; g.turn = 1; g.turnNumber = 1;
+  g.players.forEach((p) => { p.resources = { wood: 10, brick: 10, sheep: 10, wheat: 10, ore: 10 }; });
+  const v = g.board.vertices.find((x) => x.edgeIds.length >= 2);
+  const e = v.edgeIds[0];
+  g.board.edges[e].road = 1;
+  assert.equal(E.currentPlayer(g), 1);
+  assert.ok(E.buildKnight(g, v.id)); // 手番(1)の騎士として置かれる
+  assert.equal(g.players[1].knights.length, 1);
+  assert.equal(g.players[0].knights.length, 0); // 手番でない0の騎士にはならない
+});
+
+// 通信対戦9-3: 科学3段階目の「何も入らなかった人が資源1枚を選ぶ」(pendingScienceBonus)は、
+// discard・goldと同じく手番と関係なく誰からでも片付けられる必要がある（main.js ONLINE_SELF_ACTIONS）。
+// 届く順が手番順とは限らないので、エンジン側が順不同で受けられることを確かめる。
+test('都市と騎士: 科学の力(pickScienceBonus)の受け取りは、複数人が同時に待っていても届いた順(手番と無関係)に片付く', () => {
+  const g = ckGame();
+  g.phase = 'main';
+  g.pendingScienceBonus = [2, 0, 3];
+  assert.equal(E.pickScienceBonus(g, 1, 'wood'), false); // 待っていない席
+  assert.ok(E.pickScienceBonus(g, 3, 'sheep'));
+  assert.ok(E.pickScienceBonus(g, 0, 'wheat'));
+  assert.equal(E.pickScienceBonus(g, 0, 'ore'), false); // もう片付いた席からもう一度来ても断る
+  assert.ok(E.pickScienceBonus(g, 2, 'ore'));
+  assert.deepEqual(g.pendingScienceBonus, []);
+  assert.equal(g.phase, 'main');
+  assert.equal(g.players[0].resources.wheat, 1);
+  assert.equal(g.players[2].resources.ore, 1);
+  assert.equal(g.players[3].resources.sheep, 1);
 });
 
 // ---- 通信対戦: 待合のQR（段階8。デコードしての一致確認はスクラッチで npm の jsQR を使って別途確認済み）----
