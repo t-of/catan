@@ -476,6 +476,7 @@ let rolling = false; // サイコロを振るアニメの途中。この間は�
 let playerCount = load('playerCount', 3);
 if (![3, 4, 5, 6].includes(playerCount)) playerCount = 3;
 let ui = { mode: 'idle', data: {} };
+let logOpen = false; // 「出来事の流れ」の一覧を広げているか
 
 // ---- 通信対戦（みんなのスマホで） ----
 let onlineRoom = null;          // room.js の Room。1台モードでは null
@@ -1885,6 +1886,38 @@ function renderDice() {
   els.diceBox.appendChild(dieEl(game.diceLast[1], 7));
 }
 
+// 出来事の流れ（game.log）の表示用。プレイヤー名が入るのでHTMLに入れる前に必ずエスケープする
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+// 文中のプレイヤー名を、そのプレイヤーの色で塗る（名前が長い順に置換し、他の名前の部分一致を避ける）
+function colorizeLog(text) {
+  let html = esc(text);
+  (game.players || [])
+    .map((p) => ({ name: esc(p.name), color: p.color }))
+    .filter((n) => n.name)
+    .sort((a, b) => b.name.length - a.name.length)
+    .forEach(({ name, color }) => { html = html.split(name).join(`<span style="color:${color}">${name}</span>`); });
+  return html;
+}
+// 文言から分かる範囲で種類のアイコンを付ける（分からない行はアイコンなし）
+const LOG_ICONS = [
+  [/の勝ち/, '🏆'], [/^サイコロ:/, '🎲'], [/大都市|段階にした/, '🏛️'],
+  [/蛮族/, '⚔️'], [/騎士/, '🛡️'], [/進歩カードを公開/, '🎴'],
+  [/から1枚奪った/, '🗡️'], [/交易/, '🤝'], [/開拓地/, '🏠'],
+  [/サッカー|フットボール/, '⚽'], [/探検|霧の中|新しい島/, '🧭'], [/古い靴/, '👞'],
+];
+function logIcon(text) {
+  const hit = LOG_ICONS.find(([re]) => re.test(text));
+  return hit ? `<span class="log-item__icon">${hit[1]}</span>` : '';
+}
+// 新しい順に並べた一覧。サイコロの行の上に区切り線を引いて、手番の区切りが分かるようにする
+function renderLogList() {
+  const rows = game.log.slice().reverse().map((text) => {
+    const turnCls = text.startsWith('サイコロ:') ? ' log-item--turn' : '';
+    return `<div class="log-item${turnCls}">${logIcon(text)}<span>${colorizeLog(text)}</span></div>`;
+  }).join('');
+  return `<div class="log-list">${rows}</div>`;
+}
+
 function renderBanner() {
   const idx = E.currentPlayer(game);
   let main = '', hint = '';
@@ -1930,9 +1963,16 @@ function renderBanner() {
   else if (ui.mode === 'progressHexB') hint = '発明家: 2つめのマスをタップ（数字チップを入れ替えます）。';
   els.hint.textContent = hint;
   const lastLog = game.log[game.log.length - 1];
-  els.banner.innerHTML = `<div>${main}</div>` + (lastLog ? `<div class="message__log">ひとつ前: ${lastLog}</div>` : '');
+  const toggle = lastLog
+    ? `<div class="message__log" id="logToggle">ひとつ前: ${colorizeLog(lastLog)}<span class="message__log-arrow">${logOpen ? '▲' : '▼'}</span></div>`
+    : '';
+  els.banner.innerHTML = `<div>${main}</div>` + toggle + (logOpen && lastLog ? renderLogList() : '');
   els.turnNum.textContent = String(game.turnNumber);
 }
+// 「ひとつ前」の行をタップすると、出来事の流れ（game.log の一覧）を開け閉めする
+els.banner.addEventListener('click', (e) => {
+  if (e.target.closest('#logToggle')) { logOpen = !logOpen; renderBanner(); }
+});
 
 // ================================================================
 // 建てるもの（常に4つ並べ、押したらその場で置く・買う）
