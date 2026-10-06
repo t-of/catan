@@ -1,4 +1,4 @@
-# ai/ ... 学習する AI（段階 2 まで）
+# ai/ ... 学習する AI（段階 3 まで）
 
 基本ルール・4 人・基本盤・銀行/港交易だけ。設計は [../docs/ai-design.md](../docs/ai-design.md)。
 
@@ -8,6 +8,9 @@
 | features.js | 局面 → 特徴量（`viewFor` の範囲だけ）。盤のつながり `TOPO` |
 | net.js | ネットの順伝播・乱数の重み・重みファイルの読み書き |
 | selfplay.mjs | 自己対局。席は `random` / `net` / `net#種` / `net:重みファイル` / `weak` `normal` `strong` |
+| gen.mjs | 学習データの生成（自己対局・つよい CPU の模倣）。形式はファイル先頭のコメント |
+| dump-parity.mjs | 一致テスト用に重みと局面を書き出す |
+| py/ | PyTorch: `catanai.py`（ネット・重み・データ読み込み）、`train.py`（imitate / ppo）、`loop.py`（世代のループ）、`parity.py`（JS との一致テスト） |
 | test.mjs | `npm test` に入っている自己チェック |
 
 ## 特徴量（features.js）
@@ -55,3 +58,11 @@ config = `{ D: 48, rounds: 3, H: 48 }`（D: ノードの次元、rounds: 情報�
 ### 段階 3 の一致テスト
 
 同じ `feat`（`{v, e, h, g}`）と `mask` を JS（`createNet(...).forward(feat, mask)`）と PyTorch の両方に通し、`logits`・`value` の差が 1e-4 以下であること。入力は `makeFeatures` で作った局面をいくつか JSON に書き出して使う。
+
+## 学習（段階 3）。HAKUSAN の手順は [../README_hakusan.md](../README_hakusan.md)
+
+- 一致テスト: `python3 ai/py/parity.py`（node と torch が要る。`npm test` には入れていない）。重みのバイト列も JS と同じになる。
+- 世代のループ: `python3 ai/py/loop.py --run ai/runs/名前 --gens 10 --games 4000 --procs 8 --init imitate|zero`。`ai/runs/` は git に入らない。
+- PPO の決め: 1 局 1 つの結果を全判断に使う（GAE なし）。報酬 = 勝ち 1・それ以外 0 ＋ shape × （自分の点 − 4 人の平均）/10（shape は 0.3 から世代で 0 へ）。基準 = 価値の「自席が勝つ確率」。クリップ 0.2、価値 0.5・エントロピー 0.01、Adam 3e-4、3 周、KL が 0.05 を超えたら周を止める。打ち切り 300 ターン（引き分け・勝ち 0）。
+- 局の種類: 自己対局 60%（4 席とも今の重み）・過去の世代 20%・つよい CPU 20%（今の重みは 1 席）。判断は合法手が 2 つ以上のものを `--keep` の割合で記録する。
+- 模倣: つよい CPU 4 席の手を、合法手のどれを打った結果かで突き止めて記録（街道建設は除く）。交差エントロピー ＋ 勝者の価値。世代 0 にする（`--init imitate`）。

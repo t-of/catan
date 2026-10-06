@@ -1,1 +1,8 @@
 .DS_Store
+ai/.venv/
+ai/runs/
+__pycache__/
+*.pyc
+hakusan-*.tar.gz
+runs/
+logs/
