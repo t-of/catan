@@ -62,7 +62,7 @@ if (process.argv[1] && process.argv[1].endsWith('selfplay.mjs')) {
     const rot = i % seats.length;
     const rs = seats.map((_, j) => seats[(j + rot) % seats.length]);
     const r = playGame({ seats: rs, seed: seed0 + i, maxTurns });
-    if (r.winner == null) draws++; else wins[(r.winner - rot + seats.length) % seats.length]++;
+    if (r.winner == null) draws++; else wins[(r.winner + rot) % seats.length]++;
     turns += r.turns; steps += r.steps;
   }
   const ms = performance.now() - t0;
