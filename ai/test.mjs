@@ -5,6 +5,8 @@ import * as E from '../engine.js';
 import * as CPU from '../cpu.js';
 import { newAi, legalMask, applyAction, advance, decider, ACTION_COUNT, OFF } from './actions.js';
 import { playGame, mulberry32 } from './selfplay.mjs';
+import { makeFeatures, SIZES } from './features.js';
+import { createNet, initWeights, encodeWeights, decodeWeights, paramCount } from './net.js';
 
 const snapshot = (g) => JSON.stringify(g, (k, v) => (k === 'log' || k === 'events' ? undefined : v));
 
@@ -68,4 +70,71 @@ test('cpu.js（つよい・ふつう混在）の 1 手は、legalActions のど�
   }
   E.setRng(null);
   assert.ok(checked > 200, `確かめた手が少ない ${checked}`);
+});
+
+// ---- 特徴量とネット（段階 2）
+// ランダムに打って、数手おきに (game, ai, mask) を渡す
+function samplePositions(seed, every, fn) {
+  playGame({ seed, maxTurns: 3000, onStep: (g, ai, idx, a) => {
+    onStepCount++;
+    if (onStepCount % every === 0 && g.phase !== 'gameOver') fn(g, ai);
+  } });
+}
+let onStepCount = 0;
+
+test('特徴量は長さと値域が一定（0〜1・有限）', () => {
+  let n = 0;
+  samplePositions(11, 7, (g, ai) => {
+    const f = makeFeatures(g, ai, legalMask(g, ai));
+    assert.equal(f.v.length, SIZES.NV * SIZES.FV); assert.equal(f.e.length, SIZES.NE * SIZES.FE);
+    assert.equal(f.h.length, SIZES.NH * SIZES.FH); assert.equal(f.g.length, SIZES.FG);
+    for (const a of [f.v, f.e, f.h, f.g]) for (const x of a) assert.ok(x >= 0 && x <= 1, `範囲外 ${x}`);
+    n++;
+  });
+  assert.ok(n > 20);
+});
+
+test('他人の手札の中身・発展カードの種類・山札の並びが違っても、特徴量は同じ（隠し情報が入らない）', () => {
+  let n = 0;
+  samplePositions(12, 9, (g, ai) => {
+    const me = decider(g);
+    const mask = legalMask(g, ai);
+    const a = makeFeatures(g, ai, mask);
+    const c = JSON.parse(JSON.stringify(g));
+    c.players.forEach((p, i) => {
+      if (i === me) return;
+      const v = E.RESOURCES.map((r) => p.resources[r]);
+      E.RESOURCES.forEach((r, k) => { p.resources[r] = v[(k + 1) % 5]; }); // 枚数はそのままで中身だけ入れ替える
+      p.devCards.forEach((d) => { if (!d.played) d.type = d.type === 'knight' ? 'vp' : 'knight'; });
+    });
+    c.bank.devDeck.reverse();
+    const b = makeFeatures(c, ai, legalMask(c, ai));
+    for (const k of ['v', 'e', 'h', 'g']) assert.deepEqual(a[k], b[k], `${k} が違う phase=${g.phase}`);
+    n++;
+  });
+  assert.ok(n > 20);
+});
+
+test('順伝播の出力は有限で、確率は合法手にだけつき、重みは書き出して読み戻しても同じ出力', () => {
+  const w = initWeights(mulberry32(5));
+  const net = createNet(w), net2 = createNet(decodeWeights(encodeWeights(w)));
+  assert.ok(paramCount() > 50000 && paramCount() < 130000);
+  let n = 0;
+  samplePositions(13, 5, (g, ai) => {
+    const mask = legalMask(g, ai), f = makeFeatures(g, ai, mask);
+    const { logits, probs, value } = net.forward(f, mask);
+    assert.ok(logits.every(Number.isFinite) && value.every(Number.isFinite));
+    let sum = 0;
+    for (let i = 0; i < ACTION_COUNT; i++) { assert.ok(mask[i] ? probs[i] > 0 : probs[i] === 0); sum += probs[i]; }
+    assert.ok(Math.abs(sum - 1) < 1e-4);
+    assert.ok(Math.abs(value.reduce((a, b) => a + b) - 1) < 1e-4);
+    assert.deepEqual(Array.from(net2.forward(f, mask).probs), Array.from(probs));
+    n++;
+  });
+  assert.ok(n > 30);
+});
+
+test('乱数の重みのネット席が混ざっても 4 人が決着する', () => {
+  const r = playGame({ seats: ['net', 'net#2', 'random', 'random'], seed: 3, maxTurns: 3000 });
+  assert.notEqual(r.winner, null);
 });

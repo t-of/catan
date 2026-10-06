@@ -1,10 +1,23 @@
-// 自己対局ドライバ（基本ルール・4 人）。席ごとに 'random'（合法マスクから一様）か cpu.js の強さ（'weak' | 'normal' | 'strong'）。
+// 自己対局ドライバ（基本ルール・4 人）。席ごとに 'random'（合法マスクから一様）、'net'（ai/net.js。'net:重みファイル'・'net#種'＝乱数の重み）か cpu.js の強さ（'weak' | 'normal' | 'strong'）。
 // 使い方: node ai/selfplay.mjs [局数=100] [席の並び=random,random,random,random] [種=1] [打ち切りターン=300]
 //   例: node ai/selfplay.mjs 100 strong,normal,normal,normal 7
 // 種を固定すると、random だけの席なら同じ局が再現できる（cpu.js は Math.random を使うので再現しない）。
 import * as E from '../engine.js';
 import * as CPU from '../cpu.js';
+import { readFileSync } from 'node:fs';
 import { newAi, legalMask, applyAction, advance, decider, ACTION_COUNT } from './actions.js';
+import { makeFeatures } from './features.js';
+import { createNet, initWeights, decodeWeights } from './net.js';
+
+// 席 'net'（乱数の重み・種 1）| 'net#種'（乱数の重み）| 'net:重みファイル'。同じ指定は 1 つのネットを使い回す
+const nets = new Map();
+export function netFor(spec) {
+  if (!nets.has(spec)) {
+    const w = spec.startsWith('net:') ? decodeWeights(new Uint8Array(readFileSync(spec.slice(4))).buffer) : initWeights(mulberry32(+(spec.split('#')[1] || 1)));
+    nets.set(spec, createNet(w));
+  }
+  return nets.get(spec);
+}
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -30,12 +43,17 @@ export function playGame({ seats = ['random', 'random', 'random', 'random'], see
       if (game.phase === 'gameOver') break;
       const idx = decider(game);
       const seat = seats[idx];
-      if (seat === 'random') {
+      if (seat === 'random' || seat.startsWith('net')) {
         const mask = legalMask(game, ai);
         const legal = [];
         for (let i = 0; i < ACTION_COUNT; i++) if (mask[i]) legal.push(i);
         if (!legal.length) throw new Error(`合法手がない phase=${game.phase} seed=${seed}`);
-        const a = legal[Math.floor(rng() * legal.length)];
+        let a = legal[Math.floor(rng() * legal.length)];
+        if (seat !== 'random') { // ネットの方策から引く
+          const { probs } = netFor(seat).forward(makeFeatures(game, ai, mask), mask);
+          let u = rng(), c = 0;
+          for (const i of legal) { c += probs[i]; a = i; if (u < c) break; }
+        }
         if (onStep) onStep(game, ai, idx, a);
         if (!applyAction(game, ai, a)) throw new Error(`合法マスクの手が打てない a=${a} phase=${game.phase} seed=${seed}`);
       } else {
