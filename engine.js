@@ -1217,11 +1217,14 @@ export function pirateTargets(game, hexId, playerIdx) {
 export function banditTargets(game, hexId, playerIdx) {
   return game.board.hexes[hexId].terrain === 'water' ? pirateTargets(game, hexId, playerIdx) : robberTargets(game, hexId, playerIdx);
 }
+// 盗賊で奪う札の乱数。既定は Math.random（画面の挙動は変わらない）。自己対局で種を固定するときに ai/ が差し替える
+let stealRng = Math.random;
+export function setRng(fn) { stealRng = fn || Math.random; }
 function stealFrom(game, fromIdx, toIdx) {
   const res = game.players[fromIdx].resources;
   const pool = RESOURCES.flatMap((r) => Array(res[r]).fill(r));
   if (!pool.length) return null;
-  const picked = pool[Math.floor(Math.random() * pool.length)];
+  const picked = pool[Math.floor(stealRng() * pool.length)];
   res[picked]--;
   game.players[toIdx].resources[picked]++;
   return picked;
