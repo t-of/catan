@@ -684,8 +684,11 @@ let uiSeats = load('seats', null) || SEAT_SLOTS.map(defaultSeat);
 if (!Array.isArray(uiSeats) || uiSeats.length < 6) uiSeats = SEAT_SLOTS.map((i) => uiSeats[i] || defaultSeat(i));
 let seats = uiSeats.slice(0, playerCount).map((s) => ({ ...s }));
 
-function isCpuSeat(i) { return !!(seats[i] && seats[i].type === 'cpu'); }
-function seatLevel(i) { return (seats[i] && seats[i].level) || 'normal'; }
+// 'ai'（学習 AI・実験中）も「コンピューターの席」。人のような交易の返事などは「つよい」CPU に任せる
+function isAiSeat(i) { return !!(seats[i] && seats[i].type === 'ai'); }
+function isCpuSeat(i) { return !!(seats[i] && (seats[i].type === 'cpu' || seats[i].type === 'ai')); }
+function seatLevel(i) { return isAiSeat(i) ? 'strong' : (seats[i] && seats[i].level) || 'normal'; }
+function seatTag(i) { return isAiSeat(i) ? 'AI（実験中）' : `CPU・${CPU.LEVELS.find((l) => l.id === seatLevel(i))?.name || ''}`; }
 
 function renderSeatsPanel() {
   els.seatsPanel.innerHTML = '';
@@ -697,6 +700,7 @@ function renderSeatsPanel() {
       <div class="segmented seat-row__type">
         <button class="btn" data-i="${i}" data-type="human">人</button>
         <button class="btn" data-i="${i}" data-type="cpu">CPU</button>
+        <button class="btn" data-i="${i}" data-type="ai">AI（実験中）</button>
       </div>
       <div class="segmented seat-row__level"${seat.type === 'cpu' ? '' : ' hidden'}>
         ${CPU.LEVELS.map((l) => `<button class="btn" data-i="${i}" data-level="${l.id}">${l.name}</button>`).join('')}
@@ -706,6 +710,7 @@ function renderSeatsPanel() {
     nameInput.value = seat.name || '';
     row.querySelector('[data-type="human"]').classList.toggle('is-selected', seat.type === 'human');
     row.querySelector('[data-type="cpu"]').classList.toggle('is-selected', seat.type === 'cpu');
+    row.querySelector('[data-type="ai"]').classList.toggle('is-selected', seat.type === 'ai');
     row.querySelectorAll('[data-level]').forEach((b) => b.classList.toggle('is-selected', b.dataset.level === seat.level));
     els.seatsPanel.appendChild(row);
   }
@@ -905,6 +910,7 @@ function applySeatsFromMeta(meta) {
   onlineSeatUids = parsed.map((s) => (s.type === 'human' ? (s.uid || null) : null));
   seats = parsed.map((s) => (s.type === 'cpu'
     ? { type: 'cpu', level: s.level || 'normal', name: '', subbed: !!s.subbed, uid: s.uid || null }
+    : s.type === 'ai' ? { type: 'ai', level: 'strong', name: '' }
     : { type: 'human', level: 'normal', name: s.name || '' }));
 }
 
@@ -1082,6 +1088,7 @@ function renderLobby() {
     const label = document.createElement('span');
     label.className = 'seat-row__name';
     if (seat.type === 'cpu') label.textContent = `CPU・${CPU.LEVELS.find((l) => l.id === seat.level)?.name || 'ふつう'}`;
+    else if (seat.type === 'ai') label.textContent = 'AI（実験中）';
     else if (seat.uid) {
       const member = onlineMembers[seat.uid];
       const suffix = (seat.uid === onlineRoom.uid) ? '（自分）' : (member && member.online === false ? '・切断中' : '');
@@ -1094,6 +1101,17 @@ function renderLobby() {
         cpuBtn.className = 'btn btn--small'; cpuBtn.textContent = 'CPUにする';
         cpuBtn.dataset.i = i; cpuBtn.dataset.act = 'toCpu';
         row.appendChild(cpuBtn);
+        const aiBtn = document.createElement('button');
+        aiBtn.className = 'btn btn--small'; aiBtn.textContent = 'AIにする（実験中）';
+        aiBtn.dataset.i = i; aiBtn.dataset.act = 'toAi';
+        row.appendChild(aiBtn);
+      } else if (seat.type === 'ai') {
+        [['toHuman', '人にする'], ['toCpu', 'CPUにする']].forEach(([act, text]) => {
+          const b = document.createElement('button');
+          b.className = 'btn btn--small'; b.textContent = text;
+          b.dataset.i = i; b.dataset.act = act;
+          row.appendChild(b);
+        });
       } else if (seat.type === 'cpu') {
         const humanBtn = document.createElement('button');
         humanBtn.className = 'btn btn--small'; humanBtn.textContent = '人にする';
@@ -1191,6 +1209,7 @@ els.lobbySeats.addEventListener('click', (e) => {
   const lobbySeatsArr = parseSeats(onlineMeta.seats, count);
   const i = Number(btn.dataset.i);
   if (btn.dataset.act === 'toCpu') lobbySeatsArr[i] = { type: 'cpu', level: 'normal' };
+  else if (btn.dataset.act === 'toAi') lobbySeatsArr[i] = { type: 'ai' };
   else if (btn.dataset.act === 'toHuman') lobbySeatsArr[i] = { type: 'human', uid: null, name: '' };
   else if (btn.dataset.act === 'level') lobbySeatsArr[i].level = btn.dataset.level;
   else if (btn.dataset.act === 'subCpu') { onlineRoom.setMeta({ seats: JSON.stringify(subSeat(lobbySeatsArr, i)) }); return; }
@@ -1204,6 +1223,7 @@ els.lobbyStartBtn.addEventListener('click', () => {
   if (!canStart(lobbySeatsArr)) return;
   seats = lobbySeatsArr.map((s) => (s.type === 'cpu'
     ? { type: 'cpu', level: s.level || 'normal', name: '' }
+    : s.type === 'ai' ? { type: 'ai', level: 'strong', name: '' }
     : { type: 'human', level: 'normal', name: s.name || '' }));
   const names = seats.map((s) => s.name);
   // readyな拡張だけ使う（準備中のボタンはクリックできない）。交易と略奪はシナリオも送る（それ以外はnullのままでよい）
@@ -1254,7 +1274,7 @@ if (hashRoomCode) {
 // タイトルへ戻る。盤は操作のたびに保存済みなので「つづきから」で戻れる（通信対戦では部屋を出る）
 homeBtn.addEventListener('click', () => {
   if (rolling) return;
-  clearTimeout(cpuTimer); cpuTimer = null;
+  clearTimeout(cpuTimer); cpuTimer = null; cpuGen++;
   closePanel();
   game = null;
   resetCutinBaseline();
@@ -1381,6 +1401,7 @@ cpuSpeedBtn.addEventListener('click', () => {
   showCpuSpeed();
 });
 let cpuTimer = null;
+let cpuGen = 0; // 新しい対局・タイトルへ戻ると進める。AI の推論の返事が古くなったか見分ける
 // 次にCPUがすべきこと（捨て札はcurrentPlayerと無関係に、席がCPUの人から片付ける）を1つ返す。無ければ人の番。
 function nextCpuJob() {
   if (!game || game.winner != null) return null;
@@ -1403,7 +1424,25 @@ function scheduleCpu() {
   if (cpuTimer || !game) return;
   const job = nextCpuJob();
   if (!job) return;
-  cpuTimer = setTimeout(() => {
+  cpuTimer = setTimeout(async () => {
+    const acting = job.kind === 'step' ? E.actingPlayer(game) : job.player;
+    if (isAiSeat(acting)) { // AI は 1 手ずつ推論（Worker → メインスレッド）。使えなければ下の「つよい」CPU で打つ
+      const g = game, gen = cpuGen;
+      try {
+        const brain = await import('./ai/brain.js');
+        if (brain.aiCanPlay(g, acting) && (job.kind === 'step' || job.kind === 'discard')) {
+          const r = await brain.aiMove(g, acting, () => game !== g || gen !== cpuGen);
+          if (r === 'stale') { if (gen === cpuGen) { cpuTimer = null; scheduleCpu(); } return; }
+          cpuTimer = null;
+          ui = { mode: modeForPhase(), data: {} };
+          playEvents();
+          persistAndRender();
+          scheduleCpu();
+          return;
+        }
+      } catch { /* 推論が使えない: つよい CPU で打つ */ }
+      if (game !== g || gen !== cpuGen) { if (gen === cpuGen) { cpuTimer = null; scheduleCpu(); } return; }
+    }
     cpuTimer = null;
     if (job.kind === 'discard') CPU.discardFor(game, job.player, seatLevel(job.player));
     else if (job.kind === 'goldPick') CPU.pickGoldFor(game, job.player);
@@ -1789,7 +1828,7 @@ function renderPlayers() {
     const bonus = [];
     if (game.longestRoadPlayer === i) bonus.push('最長路');
     if (game.largestArmyPlayer === i) bonus.push('騎士団');
-    const cpuTag = isCpuSeat(i) ? `CPU・${CPU.LEVELS.find((l) => l.id === seatLevel(i))?.name || ''}${seats[i].subbed ? '（代打）' : ''}` : '人';
+    const cpuTag = isCpuSeat(i) ? `${seatTag(i)}${seats[i].subbed ? '（代打）' : ''}` : '人';
     // 通信対戦: 本来は人の席なのに切れている（2-5「つながりの見張り」）
     const offlineUid = onlineRoom && seats[i].type === 'human' ? onlineSeatUids[i] : null;
     const statusTag = offlineUid && onlineMembers[offlineUid] && onlineMembers[offlineUid].online === false ? '・切断中' : '';
@@ -2037,7 +2076,7 @@ function renderBanner() {
   else if (game.phase === 'moveRobber') { main = `${game.players[idx].name}の番。`; hint = '盗賊か海賊を動かすタイルをタップ。'; }
   else if (game.phase === 'specialBuilding') { main = `特別建設フェイズ: ${game.players[idx].name}の番。`; hint = '建てるか、パスしてください（交易・発展カードは使えません）。'; }
   else if (game.diceLast) main = `サイコロ ${game.diceLast[0]}＋${game.diceLast[1]}＝${game.diceLast[0] + game.diceLast[1]}。`;
-  if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
+  if (game.winner == null && game.phase !== 'discard' && isCpuSeat(idx)) hint = isAiSeat(idx) ? 'AI（実験中）が考えています…' : `CPU（${CPU.LEVELS.find((l) => l.id === seatLevel(idx))?.name || ''}）が考えています…`;
   if (onlineRoom && game.winner == null) {
     const mySeat = mySeatIndex();
     if (game.phase !== 'discard' && mySeat === idx) main += ' あなたの番です。';
@@ -2581,7 +2620,7 @@ function fillOtherPick(container, other, act) {
     const b = document.createElement('button');
     b.dataset.act = act || 'other'; b.dataset.p = i;
     if (i === other) b.classList.add('is-selected');
-    b.textContent = `${game.players[i].name}` + (isCpuSeat(i) ? '（CPU）' : '');
+    b.textContent = `${game.players[i].name}` + (isCpuSeat(i) ? (isAiSeat(i) ? '（AI）' : '（CPU）') : '');
     container.appendChild(b);
   });
 }

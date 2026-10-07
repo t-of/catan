@@ -1864,3 +1864,12 @@ test('viewFor: 都市と騎士の商品は枚数だけ、lastStealの中身は�
   assert.deepEqual(E.viewFor(g, 2).lastSteal, { from: 1, to: 2, res: 'wood' }); // 奪った人
   assert.equal(E.viewFor(g, null).lastSteal, null); // pub(誰でもない)からは見えない
 });
+
+test('sw.js の SHELL に AI の実行時ファイルが全部入っている', async () => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const sw = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
+  for (const f of ['ai/brain.js', 'ai/worker.js', 'ai/net.js', 'ai/actions.js', 'ai/features.js', 'ai/model.bin']) {
+    assert.ok(sw.includes(`'./${f}'`), `${f} が SHELL にない`);
+    assert.ok(existsSync(new URL(`./${f}`, import.meta.url)));
+  }
+});

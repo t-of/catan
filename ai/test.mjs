@@ -138,3 +138,29 @@ test('乱数の重みのネット席が混ざっても 4 人が決着する', ()
   const r = playGame({ seats: ['net', 'net#2', 'random', 'random'], seed: 3, maxTurns: 3000 });
   assert.notEqual(r.winner, null);
 });
+
+test('学習済みの重み（ai/model.bin）が読めて、AI 席（brain.aiMove）で 4 人の 1 局が最後まで進む。1 手の時間も出す', async () => {
+  const { readFileSync } = await import('node:fs');
+  globalThis.fetch = async (u) => { const b = readFileSync(new URL(u)); return { ok: true, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }; };
+  const { aiMove, aiCanPlay, aiSupported } = await import('./brain.js');
+  const rng = mulberry32(11);
+  E.setRng(rng);
+  try {
+    const g = E.createGame(4, rng);
+    assert.ok(aiSupported(g) && !aiSupported(E.createGame(3, rng)) && !aiSupported(E.createGame(4, rng, { expansions: ['seafarers'] })));
+    let ai = 0, ms = 0, n = 0;
+    for (let i = 0; i < 20000 && g.phase !== 'gameOver' && g.turnNumber < 400; i++) {
+      advance(g, rng);
+      if (g.phase === 'gameOver') break;
+      const seat = decider(g);
+      if (seat === 0 && aiCanPlay(g, seat)) {
+        const t = performance.now();
+        assert.equal(await aiMove(g, seat), true);
+        ms += performance.now() - t; n++; ai++;
+      } else assert.ok(g.phase === 'discard' ? CPU.discardFor(g, seat, 'strong') : CPU.step(g, 'strong'));
+    }
+    assert.ok(ai > 30, `AI の手が少ない ${ai}`);
+    console.log(`AI 席: ${ai} 手、1 手 ${(ms / n).toFixed(2)}ms（メインスレッド・特徴量づくりと打つまでを含む）、局の終わり=${g.phase}`);
+    assert.equal(g.phase, 'gameOver');
+  } finally { E.setRng(null); }
+});

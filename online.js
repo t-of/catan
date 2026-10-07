@@ -7,7 +7,7 @@ import qrcode from './qr.js';
 const GAME = 'catan';
 
 // 待合の座席。空いている人の席は uid: null。
-// [{ type: 'human', uid: string|null, name: string }, { type: 'cpu', level: 'weak'|'normal'|'strong' }, ...]
+// [{ type: 'human', uid: string|null, name: string }, { type: 'cpu', level: 'weak'|'normal'|'strong' }, { type: 'ai' }, ...]
 function emptySeats(count) {
   return Array.from({ length: count }, () => ({ type: 'human', uid: null, name: '' }));
 }
@@ -52,7 +52,7 @@ function seatMembers(seats, members) {
 // 全席が人（座った）かCPUで、人が2人以上なら始められる
 function canStart(seats) {
   const humanCount = seats.filter((s) => s.type === 'human').length;
-  return humanCount >= 2 && seats.every((s) => s.type === 'cpu' || (s.type === 'human' && s.uid));
+  return humanCount >= 2 && seats.every((s) => s.type === 'cpu' || s.type === 'ai' || (s.type === 'human' && s.uid));
 }
 
 // 席 i を「CPUに代わってもらう」。持ち主(uid)は覚えておき、本人が戻ったら revertSubbedSeats で人に戻す

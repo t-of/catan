@@ -9,7 +9,7 @@
 // ブラウザの HTTP キャッシュを通さない（install は reload、fetch は no-cache）。古い main.js と新しい index.html が混ざって動かなくなるのを防ぐ。
 
 const PREFIX = 'catan-';
-const VERSION = 'v32';
+const VERSION = 'v33';
 const CACHE = `${PREFIX}${VERSION}`;
 const FONT_CACHE = `${PREFIX}fonts`;
 
@@ -24,6 +24,12 @@ const SHELL = [
   './online.js',
   './room.js',
   './qr.js',
+  './ai/brain.js',
+  './ai/worker.js',
+  './ai/net.js',
+  './ai/actions.js',
+  './ai/features.js',
+  './ai/model.bin',
   './manifest.webmanifest',
   './webapp-kit/webapp-kit.css',
   './webapp-kit/webapp-kit.js',

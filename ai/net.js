@@ -71,6 +71,13 @@ export function decodeWeights(buf) {
   return { config: head.config, tensors };
 }
 
+// 重みファイルを URL から読む（ブラウザの Worker・メインスレッド用）
+export async function loadNet(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`重みを読めない ${res.status}`);
+  return createNet(decodeWeights(await res.arrayBuffer()));
+}
+
 // out[i][o] += Σk x[i][k] · W[o][wOff+k]（W は行優先 [出力, 入力全体]。inN は W の 1 行の長さ）。出力 4 つずつまとめて足す（速い）
 function mm(out, x, n, kIn, W, inN, wOff, nOut) {
   for (let i = 0; i < n; i++) {
